@@ -262,6 +262,14 @@ textarea.editor:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(74,125,
               <div class="handoff-field" contenteditable="true" id="hConstraints" data-placeholder="限制条件、注意事项..."></div>
             </div>
           </div>
+          <!-- Plan 变更推送开关 -->
+          <div style="margin-bottom:10px;padding:8px 10px;background:rgba(74,125,255,0.04);border:1px solid rgba(74,125,255,0.12);border-radius:var(--r2)">
+            <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text);cursor:pointer">
+              <input type="checkbox" id="planPushToggle" checked onchange="togglePlanPush()" style="width:16px;height:16px;cursor:pointer">
+              <span>自动推送 Plan 变更到 Executor</span>
+            </label>
+            <div style="font-size:10px;color:var(--text3);margin-top:4px;margin-left:24px">开启后，Plan 面板的新增/状态变更会实时推送到 Executor 终端</div>
+          </div>
           <!-- 计划项列表 -->
           <div id="planItems"><div class="plan-empty">暂无计划项，下方添加</div></div>
         </div>
@@ -350,6 +358,11 @@ function connect() {
       progress_update: () => { S.progress = m.data; renderProgress(); },
       messages_init: () => { S.msgs = m.data || []; renderMsgs(); },
       message: () => { S.msgs.push({ from: m.from, to: m.to, text: m.text, time: m.time }); renderMsgs(); },
+      plan_push_status: () => {
+        // 同步开关状态
+        const toggle = $('planPushToggle');
+        if (toggle) toggle.checked = m.enabled;
+      },
     };
     if (h[m.type]) h[m.type]();
   };
@@ -522,6 +535,12 @@ function renderPlan() {
     const assignee = item.assignee ? ` · ${item.assignee}` : '';
     return `<div class="plan-item"><div class="plan-check ${checkCls}" onclick="cyclePlanStatus('${item.id}')">${check}</div><div class="plan-content"><div class="plan-title ${titleCls}">${esc(item.title)}</div><div class="plan-meta">${statusText}${assignee}</div></div></div>`;
   }).join('');
+}
+
+// ── Plan 变更推送开关 ──
+function togglePlanPush() {
+  const enabled = $('planPushToggle').checked;
+  send({ type: 'plan_push_toggle', enabled });
 }
 
 function addPlanItem() {

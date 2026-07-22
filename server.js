@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { WebSocketServer } = require('ws');
 const pty = require('node-pty');
+const chokidar = require('chokidar');
 
 const PORT = 3456;
 const SHARED = path.join(__dirname, 'shared');
@@ -25,9 +26,139 @@ for (const [file, content] of [[MEM_FILE,'{}'],[MSG_FILE,'[]'],[PLAN_FILE,'{"ite
   if (!fs.existsSync(file)) fs.writeFileSync(file, content);
 }
 
+// ── Plan 变更推送开关 ──
+let planPushEnabled = true;  // 默认开启
+
+// ── Plan 变更监听 ──
+let lastPlanSnapshot = null;  // 保存上一次的 plan 快照用于 diff
+let planPushQueue = [];  // 变更队列
+let planPushTimer = null;  // 防抖定时器
+
 // ── 工具函数 ──
 function readJSON(file) { try { return JSON.parse(fs.readFileSync(file, 'utf-8')); } catch { return {}; } }
 function writeJSON(file, data) { fs.writeFileSync(file, JSON.stringify(data, null, 2)); }
+
+// ── Plan 变更检测与推送 ──
+function detectPlanChanges(newPlan) {
+  if (!lastPlanSnapshot) {
+    // 首次加载，保存快照
+    lastPlanSnapshot = JSON.parse(JSON.stringify(newPlan));
+    return [];
+  }
+
+  const changes = [];
+  const oldItems = lastPlanSnapshot.items || [];
+  const newItems = newPlan.items || [];
+
+  // 检测新增项
+  for (const newItem of newItems) {
+    const oldItem = oldItems.find(i => i.id === newItem.id);
+    if (!oldItem) {
+      // 新增计划项
+      changes.push({
+        type: 'add',
+        title: newItem.title,
+        status: newItem.status,
+      });
+    } else if (oldItem.status !== newItem.status) {
+      // 状态变更
+      const statusMap = { todo: '待开始', doing: '进行中', done: '已完成' };
+      changes.push({
+        type: 'status_change',
+        title: newItem.title,
+        oldStatus: statusMap[oldItem.status] || oldItem.status,
+        newStatus: statusMap[newItem.status] || newItem.status,
+      });
+    }
+  }
+
+  // 更新快照
+  lastPlanSnapshot = JSON.parse(JSON.stringify(newPlan));
+  return changes;
+}
+
+function formatPlanChange(change) {
+  if (change.type === 'add') {
+    return `[Plan 更新] 新增任务：${change.title}`;
+  } else if (change.type === 'status_change') {
+    return `[Plan 更新] "${change.title}" 状态：${change.oldStatus} → ${change.newStatus}`;
+  }
+  return null;
+}
+
+function pushPlanChangesToExecutor(changes) {
+  if (!planPushEnabled || !changes.length) return;
+
+  // 将变更添加到队列
+  planPushQueue.push(...changes);
+
+  // 清除之前的定时器（防抖）
+  if (planPushTimer) {
+    clearTimeout(planPushTimer);
+  }
+
+  // 设置新的定时器，100ms 内没有新变更才执行推送
+  planPushTimer = setTimeout(() => {
+    const changesToPush = [...planPushQueue];
+    planPushQueue = [];
+
+    if (!changesToPush.length) return;
+
+    // 找到 Executor 终端
+    for (const [id, agent] of agents) {
+      if (agent.type === 'terminal' && agent.role === 'executor' && agent.alive) {
+        // 格式化所有变更并推送
+        for (const change of changesToPush) {
+          const text = formatPlanChange(change);
+          if (text) {
+            // 追加显示，使用 \r\n 确保新行
+            agent.proc.write(`\r\n\x1b[36m${text}\x1b[0m\r\n`);
+          }
+        }
+        break;  // 只推送到第一个 Executor
+      }
+    }
+
+    console.log(`[Plan Push] 推送了 ${changesToPush.length} 个变更`);
+  }, 100);
+}
+
+// 启动 plan.json 文件监听
+function startPlanWatcher() {
+  // 初始化快照
+  try {
+    const initialPlan = readJSON(PLAN_FILE);
+    lastPlanSnapshot = JSON.parse(JSON.stringify(initialPlan));
+    console.log('[Plan Watch] 初始化快照完成');
+  } catch (err) {
+    console.error('[Plan Watch] 初始化快照失败:', err.message);
+  }
+
+  const watcher = chokidar.watch(PLAN_FILE, {
+    persistent: true,
+    ignoreInitial: true,
+    awaitWriteFinish: {
+      stabilityThreshold: 100,
+      pollInterval: 50,
+    },
+  });
+
+  watcher.on('change', (filePath) => {
+    try {
+      const newPlan = readJSON(PLAN_FILE);
+      const changes = detectPlanChanges(newPlan);
+      if (changes.length) {
+        pushPlanChangesToExecutor(changes);
+        console.log(`[Plan Watch] 检测到 ${changes.length} 个变更`);
+      }
+    } catch (err) {
+      console.error('[Plan Watch] 处理变更失败:', err.message);
+    }
+  });
+
+  console.log('[Plan Watch] 开始监听 plan.json');
+  return watcher;
+}
 
 // ── Agent 管理（PTY 终端）──
 const agents = new Map();
@@ -501,6 +632,14 @@ wss.on('connection', ws => {
           broadcast({ type: 'messages_init', data: [] });
           break;
         }
+
+        case 'plan_push_toggle': {
+          // 切换 Plan 变更推送开关
+          planPushEnabled = msg.enabled;
+          broadcast({ type: 'plan_push_status', enabled: planPushEnabled });
+          console.log(`[Plan Push] ${planPushEnabled ? '开启' : '关闭'}`);
+          break;
+        }
       }
     } catch (err) { console.error('[ERR]', err.message); }
   });
@@ -528,6 +667,9 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log(`\n  AgentHub  http://localhost:${PORT}\n`);
   console.log(`  Claude API: ${CLAUDE_API.baseUrl} (${CLAUDE_API.model})\n`);
   if (process.platform === 'win32') require('child_process').exec(`start http://localhost:${PORT}`);
+
+  // 启动 plan.json 文件监听
+  startPlanWatcher();
 });
 
 process.on('SIGINT', () => { for (const [id] of agents) stopAgent(id); process.exit(0); });
