@@ -451,35 +451,65 @@ function buildClaudePanel(id, label, role) {
 
   // Claude Agent 的输入方式：回车发送消息
   let inputBuffer = '';
+  let cursorPos = 0;  // 光标在 inputBuffer 中的位置
+  let escBuf = '';     // escape 序列缓冲
   const prompt = '> ';
 
   function redrawLine() {
-    // 清除当前行并重绘：\r 回到行首，写 prompt + 输入内容，用空格覆盖剩余
     const full = prompt + inputBuffer;
-    const pad = Math.max(0, 80 - full.length);  // 用空格覆盖旧内容
-    term.write('\r' + full + ' '.repeat(pad) + '\r' + full);
+    const pad = Math.max(0, 80 - full.length);
+    term.write('\r' + full + ' '.repeat(pad) + '\r');
+    // 移动光标到正确位置
+    const target = prompt.length + cursorPos;
+    if (target > 0) term.write('\x1b[' + target + 'C');
   }
 
   term.write(prompt);
 
   term.onData(d => {
+    // 处理 escape 序列（方向键）
+    if (d === '\x1b') { escBuf = '\x1b'; return; }
+    if (escBuf === '\x1b' && d === '[') { escBuf = '\x1b['; return; }
+    if (escBuf === '\x1b[') {
+      escBuf = '';
+      if (d === 'D') {  // ← 左移光标
+        if (cursorPos > 0) { cursorPos--; term.write('\x1b[D'); }
+      } else if (d === 'C') {  // → 右移光标
+        if (cursorPos < inputBuffer.length) { cursorPos++; term.write('\x1b[C'); }
+      } else if (d === 'A') {  // ↑ 历史上一条
+        // 未来可加
+      } else if (d === 'B') {  // ↓ 历史下一条
+        // 未来可加
+      }
+      return;
+    }
+    escBuf = '';
+
     if (d === '\r' || d === '\n') {  // 回车
       if (inputBuffer.trim()) {
         term.write(`\r\n`);
         send({ type: 'claude_input', id, text: inputBuffer.trim() });
       }
       inputBuffer = '';
+      cursorPos = 0;
       term.write(prompt);
     } else if (d === '\x7f' || d === '\b') {  // Backspace
-      if (inputBuffer.length > 0) {
-        inputBuffer = inputBuffer.slice(0, -1);
+      if (cursorPos > 0) {
+        inputBuffer = inputBuffer.slice(0, cursorPos - 1) + inputBuffer.slice(cursorPos);
+        cursorPos--;
         redrawLine();
       }
     } else if (d === '\x15') {  // Ctrl+U 清空
       inputBuffer = '';
+      cursorPos = 0;
       redrawLine();
+    } else if (d === '\x03') {  // Ctrl+C 取消
+      inputBuffer = '';
+      cursorPos = 0;
+      term.write('^C\r\n' + prompt);
     } else if (d >= ' ' && d !== '\x1b') {  // 可打印字符
-      inputBuffer += d;
+      inputBuffer = inputBuffer.slice(0, cursorPos) + d + inputBuffer.slice(cursorPos);
+      cursorPos++;
       redrawLine();
     }
   });

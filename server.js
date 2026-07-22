@@ -83,6 +83,93 @@ function createClaudeAgent(id, opts = {}) {
   return agent;
 }
 
+// 读取工作目录结构（给 Claude 提供本地文件上下文）
+function getWorkspaceContext() {
+  try {
+    // 读取顶层目录结构
+    const entries = fs.readdirSync(WORK_DIR, { withFileTypes: true });
+    const structure = entries
+      .filter(e => !e.name.startsWith('.') && e.name !== 'node_modules')
+      .map(e => e.isDirectory() ? `📁 ${e.name}/` : `📄 ${e.name}`)
+      .join('\n');
+
+    // 读取关键文件摘要
+    const keyFiles = ['CLAUDE.md', 'MEMORY.md', 'RULES.md'];
+    let fileContents = '';
+    for (const f of keyFiles) {
+      const fp = path.join(WORK_DIR, f);
+      if (fs.existsSync(fp)) {
+        const content = fs.readFileSync(fp, 'utf-8').slice(0, 2000);
+        fileContents += `\n--- ${f} ---\n${content}\n`;
+      }
+    }
+
+    // 读取 vault/ 目录结构
+    const vaultPath = path.join(WORK_DIR, 'vault');
+    let vaultStructure = '';
+    if (fs.existsSync(vaultPath)) {
+      try {
+        const vaultEntries = fs.readdirSync(vaultPath, { withFileTypes: true });
+        vaultStructure = vaultEntries
+          .map(e => e.isDirectory() ? `📁 vault/${e.name}/` : `📄 vault/${e.name}`)
+          .join('\n');
+      } catch {}
+    }
+
+    // 读取 FOR SHRIMP/skills/ 目录
+    const skillsPath = path.join(WORK_DIR, 'FOR SHRIMP', 'skills');
+    let skillsStructure = '';
+    if (fs.existsSync(skillsPath)) {
+      try {
+        const walk = (dir, prefix = '') => {
+          const items = [];
+          const ents = fs.readdirSync(dir, { withFileTypes: true });
+          for (const e of ents) {
+            if (e.isDirectory()) {
+              items.push(`📁 ${prefix}${e.name}/`);
+              items.push(...walk(path.join(dir, e.name), prefix + e.name + '/'));
+            } else {
+              items.push(`📄 ${prefix}${e.name}`);
+            }
+          }
+          return items.slice(0, 50);  // 限制数量
+        };
+        skillsStructure = walk(skillsPath).join('\n');
+      } catch {}
+    }
+
+    return `
+## 工作目录 (${WORK_DIR})
+
+### 顶层结构
+${structure}
+
+### vault/ 目录
+${vaultStructure || '无'}
+
+### skills/ 目录
+${skillsStructure || '无'}
+
+### 关键文件摘要
+${fileContents || '无'}
+`;
+  } catch (err) {
+    return `无法读取工作目录: ${err.message}`;
+  }
+}
+
+// 读取指定文件（供 Claude 引用）
+function readFile(relPath) {
+  try {
+    const fullPath = path.join(WORK_DIR, relPath);
+    if (!fullPath.startsWith(WORK_DIR)) return '路径不允许';
+    const content = fs.readFileSync(fullPath, 'utf-8');
+    return content.slice(0, 5000);
+  } catch (err) {
+    return `读取失败: ${err.message}`;
+  }
+}
+
 // 调用 Claude API
 async function callClaude(agentId, userMessage) {
   const agent = agents.get(agentId);
@@ -91,7 +178,7 @@ async function callClaude(agentId, userMessage) {
   // 构建上下文
   const plan = readJSON(PLAN_FILE);
   const mem = readJSON(MEM_FILE);
-  const msgs = readJSON(MSG_FILE);
+  const workspaceCtx = getWorkspaceContext();
 
   const planText = plan.items?.length
     ? plan.items.map(i => `${i.status === 'done' ? '✅' : i.status === 'doing' ? '🔄' : '⬜'} ${i.title}`).join('\n')
@@ -105,10 +192,13 @@ ${planText}
 共享记忆：
 ${JSON.stringify(mem, null, 2)}
 
+${workspaceCtx}
+
 你的职责：
 - 如果你是 planner：分析需求、设计方案、添加计划项
 - 如果你是 executor：读取计划、执行任务、回写结果
 - 回复简洁，用中文，必要时用代码块
+- 你可以读取本地文件，输入 [READ] 相对路径 来读取文件内容
 - 如果需要添加计划项，用 JSON 格式输出：[PLAN_ADD] {"title":"xxx","assignee":"executor"}`;
 
   agent.history.push({ role: 'user', content: userMessage });
@@ -167,6 +257,22 @@ ${JSON.stringify(mem, null, 2)}
           broadcast({ type: 'plan_update', data: plan });
           broadcast({ type: 'output', id: agentId, data: `\x1b[36m[自动] 已添加计划项: ${item.title}\x1b[0m\r\n` });
         } catch {}
+      }
+    }
+
+    // 检测 [READ] 文件读取请求
+    const readMatch = reply.match(/\[READ\]\s*(.+)/g);
+    if (readMatch) {
+      for (const m of readMatch) {
+        const filePath = m.replace('[READ] ', '').trim();
+        const content = readFile(filePath);
+        broadcast({ type: 'output', id: agentId, data: `\x1b[36m[文件] ${filePath}:\x1b[0m\r\n` });
+        broadcast({ type: 'output', id: agentId, data: content + '\r\n' });
+        // 自动把文件内容加入对话历史
+        agent.history.push({ role: 'user', content: `[文件内容: ${filePath}]\n${content}` });
+        // 再次调用 Claude 让它基于文件内容回复
+        callClaude(agentId, `我已经读取了 ${filePath} 的内容，请基于此继续分析。`);
+        return;  // 避免重复发消息
       }
     }
 
