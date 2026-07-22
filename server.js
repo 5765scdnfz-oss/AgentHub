@@ -15,8 +15,8 @@ const WORK_DIR = 'C:\\Users\\YUAN\\Desktop\\claude code';
 // ── Claude API 配置 ──
 const CLAUDE_API = {
   baseUrl: process.env.ANTHROPIC_BASE_URL || 'https://token-plan-cn.xiaomimimo.com/anthropic',
-  apiKey: process.env.ANTHROPIC_API_KEY || 'tp-cfrejti62offzr9sqp35jcb6dx2imnxp1k3ictae6am41pzy',
-  model: process.env.ANTHROPIC_DEFAULT_SONNET_MODEL || 'xiaomi/mimo-v2.5-pro',
+  apiKey: process.env.ANTHROPIC_AUTH_TOKEN || 'tp-c79bek9lv4lqcgexiyyrgn03jvd4tkjlicpi8xs44y9r0g4f',
+  model: 'mimo-v2.5-pro',
 };
 
 // 初始化共享目录
@@ -133,7 +133,10 @@ ${JSON.stringify(mem, null, 2)}
     });
 
     const data = await response.json();
-    const reply = data.content?.[0]?.text || '抱歉，我无法处理这个请求。';
+    // 兼容 thinking + text 两种响应格式
+    const textBlock = data.content?.find(b => b.type === 'text');
+    const thinkBlock = data.content?.find(b => b.type === 'thinking');
+    const reply = textBlock?.text || thinkBlock?.thinking || '无响应';
 
     agent.history.push({ role: 'assistant', content: reply });
 
