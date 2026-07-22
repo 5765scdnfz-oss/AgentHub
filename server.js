@@ -11,7 +11,7 @@ const MEM_FILE = path.join(SHARED, 'memory.json');
 const MSG_FILE = path.join(SHARED, 'messages.json');
 const PLAN_FILE = path.join(SHARED, 'plan.json');
 const PROGRESS_FILE = path.join(SHARED, 'progress.json');
-const WORK_DIR = 'C:\\Users\\YUAN\\Desktop\\claude code';
+const WORK_DIR = process.env.AGENTHUB_WORKDIR || path.join(__dirname, '..');
 
 // ── Claude API 配置 ──
 const CLAUDE_API = {
@@ -111,8 +111,9 @@ function pushPlanChangesToExecutor(changes) {
         for (const change of changesToPush) {
           const text = formatPlanChange(change);
           if (text) {
+            // 只广播给前端显示，不写入 proc（proc.write 是真实键盘输入，会被 shell 当命令执行）
             // 使用光标保存/恢复，避免打断用户正在输入的内容
-            agent.proc.write(`\x1b[s\r\n\x1b[36m${text}\x1b[0m\r\n\x1b[u`);
+            broadcast({ type: 'output', id: agent.id, data: `\x1b[s\r\n\x1b[36m${text}\x1b[0m\r\n\x1b[u` });
           }
         }
         break;  // 只推送到第一个 Executor
@@ -121,6 +122,38 @@ function pushPlanChangesToExecutor(changes) {
 
     console.log(`[Plan Push] 推送了 ${changesToPush.length} 个变更`);
   }, 100);
+}
+
+// ── Executor 完成标记反向同步（AGENTHUB-002）──
+// Executor 终端里输入 `#DONE <计划项ID>` 并回车，识别后自动把该计划项标记为已完成
+function detectTaskDone(agent, chunk) {
+  agent.lineBuffer = (agent.lineBuffer || '') + chunk.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+  const lines = agent.lineBuffer.split(/\r?\n/);
+  agent.lineBuffer = lines.pop(); // 最后一段可能不完整，留到下次拼接
+
+  for (const line of lines) {
+    const m = line.match(/#DONE\s+(\S+)/);
+    if (m) markPlanItemDone(agent, m[1]);
+  }
+}
+
+function markPlanItemDone(agent, itemId) {
+  const plan = readJSON(PLAN_FILE);
+  const item = (plan.items || []).find(i => i.id === itemId);
+
+  if (!item) {
+    // 只广播给前端显示，不写入 proc（proc.write 是真实键盘输入，会被 shell 当命令执行）
+    broadcast({ type: 'output', id: agent.id, data: `\x1b[s\r\n\x1b[31m[Plan 同步] 未找到计划项 ID: ${itemId}\x1b[0m\r\n\x1b[u` });
+    return;
+  }
+  if (item.status === 'done') return; // 已是完成状态，无需重复处理
+
+  item.status = 'done';
+  writeJSON(PLAN_FILE, plan);
+  lastPlanSnapshot = JSON.parse(JSON.stringify(plan)); // 避免 chokidar watcher 重复检测并再推送一次
+  broadcast({ type: 'plan_update', data: plan });
+  broadcast({ type: 'output', id: agent.id, data: `\x1b[s\r\n\x1b[32m[Plan 同步] "${item.title}" 已标记为完成\x1b[0m\r\n\x1b[u` });
+  console.log(`[Task Done] ${itemId} -> done (by ${agent.label})`);
 }
 
 // 启动 plan.json 文件监听
@@ -173,7 +206,7 @@ function createAgent(id, opts = {}) {
     cwd: opts.cwd || WORK_DIR, env: { ...process.env, TERM: 'xterm-256color' },
   });
 
-  const agent = { id, proc, alive: true, type: 'terminal', role: opts.role || 'general', label: opts.label || id, status: 'running', startedAt: Date.now() };
+  const agent = { id, proc, alive: true, type: 'terminal', role: opts.role || 'general', label: opts.label || id, status: 'running', startedAt: Date.now(), lineBuffer: '' };
   agents.set(id, agent);
   updateProgress(id, { status: 'running', role: agent.role, label: agent.label });
 
@@ -182,6 +215,7 @@ function createAgent(id, opts = {}) {
     if (data.includes('ERROR') || data.includes('error:') || data.includes('FAILED')) {
       agent.status = 'error'; updateProgress(id, { status: 'error' });
     }
+    if (agent.role === 'executor') detectTaskDone(agent, data);
   });
 
   proc.onExit(({ exitCode }) => {

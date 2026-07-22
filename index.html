@@ -435,9 +435,9 @@ function startPlanExecute() {
   stopAll();
   S.layout = 2;
 
-  // 创建两个 Claude Agent：Planner + Executor
-  addClaudeAgent('planner', 'Planner');
-  setTimeout(() => addClaudeAgent('executor', 'Executor'), 300);
+  // 创建两个真实终端：Planner + Executor
+  addAgent('planner', 'Planner');
+  setTimeout(() => addAgent('executor', 'Executor'), 300);
 
   // 初始化 Plan
   setTimeout(() => {
