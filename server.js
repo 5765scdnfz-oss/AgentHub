@@ -175,31 +175,40 @@ async function callClaude(agentId, userMessage) {
   const agent = agents.get(agentId);
   if (!agent || agent.type !== 'claude') return;
 
-  // 构建上下文
+  // 构建上下文（精简版，避免 API 响应慢）
   const plan = readJSON(PLAN_FILE);
   const mem = readJSON(MEM_FILE);
-  const workspaceCtx = getWorkspaceContext();
 
   const planText = plan.items?.length
     ? plan.items.map(i => `${i.status === 'done' ? '✅' : i.status === 'doing' ? '🔄' : '⬜'} ${i.title}`).join('\n')
     : '暂无计划';
 
-  const systemPrompt = `你是 AgentHub 的 ${agent.role} Agent。你的角色是参与团队讨论，分析问题，提供方案。
+  // 根据角色不同的系统提示
+  let systemPrompt;
+  if (agent.role === 'planner') {
+    systemPrompt = `你是 Planner Agent，负责分析需求、设计方案。
 
 当前计划：
 ${planText}
 
-共享记忆：
-${JSON.stringify(mem, null, 2)}
+你的职责：
+- 分析用户需求，拆解为可执行的计划项
+- 回复简洁，用中文
+- 需要添加计划项时输出：[PLAN_ADD] {"title":"xxx","assignee":"executor"}
+- 需要读取文件时输出：[READ] 文件相对路径
+- 需要搜索文件时输出：[SEARCH] 关键词`;
+  } else {
+    systemPrompt = `你是 Executor Agent，负责执行计划中的任务。
 
-${workspaceCtx}
+当前计划：
+${planText}
 
 你的职责：
-- 如果你是 planner：分析需求、设计方案、添加计划项
-- 如果你是 executor：读取计划、执行任务、回写结果
-- 回复简洁，用中文，必要时用代码块
-- 你可以读取本地文件，输入 [READ] 相对路径 来读取文件内容
-- 如果需要添加计划项，用 JSON 格式输出：[PLAN_ADD] {"title":"xxx","assignee":"executor"}`;
+- 执行分配给你的计划项
+- 回复简洁，用中文，说明你做了什么
+- 需要读取文件时输出：[READ] 文件相对路径
+- 完成后说明结果`;
+  }
 
   agent.history.push({ role: 'user', content: userMessage });
 
@@ -240,15 +249,18 @@ ${workspaceCtx}
     for (const line of lines) {
       const trimmed = line.trim();
 
-      // [PLAN_ADD] — 静默处理
+      // [PLAN_ADD] — 静默处理，自动触发 Executor
       if (trimmed.startsWith('[PLAN_ADD]')) {
         try {
           const item = JSON.parse(trimmed.replace('[PLAN_ADD] ', ''));
           const plan = readJSON(PLAN_FILE);
           plan.items = plan.items || [];
-          plan.items.push({ id: 'p' + Date.now(), title: item.title, status: 'todo', assignee: item.assignee || 'executor' });
+          const newItem = { id: 'p' + Date.now(), title: item.title, status: 'todo', assignee: item.assignee || 'executor' };
+          plan.items.push(newItem);
           writeJSON(PLAN_FILE, plan);
           broadcast({ type: 'plan_update', data: plan });
+          // 自动触发 Executor 执行
+          injectToExecutor(newItem);
         } catch {}
         continue;  // 不显示给用户
       }
