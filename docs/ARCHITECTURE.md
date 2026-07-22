@@ -107,6 +107,53 @@ done (✅ 完成)
 todo (循环)
 ```
 
+## Handoff 交接单
+
+Handoff 是 Plan 面板的结构化补充，来源于 `多agent同步` skill 的 `.shared/handoff.md` 设计。
+
+```
+┌─ Handoff ─────────────────────┐
+│ 📋 当前任务                    │
+│ [contenteditable]             │
+│                               │
+│ 💡 决策结论                    │
+│ [contenteditable]             │
+│                               │
+│ ✅ 执行标准                    │
+│ [contenteditable]             │
+│                               │
+│ ⚠️ 已知约束                    │
+│ [contenteditable]             │
+└───────────────────────────────┘
+```
+
+- 存储位置：`shared/memory.json` 的 `handoff` 字段
+- 编辑方式：contenteditable，失焦自动保存
+- 用途：Planner 在开始规划前填写，Executor 执行时参考
+
+## Claude 加入聊天室（规划中）
+
+架构设想：
+
+```
+Plan Room
+├── 👤 用户A (浏览器)
+├── 👤 用户B (浏览器)
+├── 🤖 Claude Agent (API)  ← Anthropic API
+│   ├── 读取 Plan + Memory + Messages
+│   ├── 分析、建议、添加计划项
+│   └── 发送消息到聊天室
+└── ⚡ Executor (终端)
+```
+
+实现方式：
+1. 服务端新增 Claude Agent 类型（不走 PTY，走 API）
+2. Claude Agent 监听 Plan Room 的消息
+3. 收到新消息时调用 Anthropic API 生成回复
+4. 回复发送到聊天室，所有用户可见
+
+本质：Claude 从"终端里的工具"变成"团队成员"。
+
 ## 关键设计决策
 
 ### 为什么用 node-pty 而不是 child_process？

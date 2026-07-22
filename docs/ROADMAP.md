@@ -41,10 +41,22 @@
   - 消息中引用计划项
   - AI Agent 自动回复
 
+- [ ] **Claude 加入聊天室**：
+  - Claude 作为 API 用户加入 Plan Room
+  - 通过 Anthropic API 实现 Claude Agent
+  - Claude 可以读取 Plan、Memory、Messages
+  - Claude 可以发送消息、添加计划项
+  - 本质：把 Claude 从"终端里的工具"变成"团队成员"
+
 - [ ] **权限控制**：
   - Plan 编辑权限
   - Execute 控制权限
   - 只读观察者
+
+- [ ] **Handoff 交接单**（已并入基础版）：
+  - 当前任务 / 决策结论 / 执行标准 / 已知约束
+  - 与 Plan 面板集成
+  - 自动持久化到 shared/memory.json
 
 ## Phase 3: Agent 编排引擎
 

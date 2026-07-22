@@ -103,6 +103,15 @@ body::before{content:'';position:fixed;top:-120px;right:-120px;width:400px;heigh
 .plan-meta{font-size:10px;color:var(--text3);margin-top:2px}
 .plan-empty{color:var(--text3);text-align:center;padding:24px;font-size:12px}
 .add-plan{display:flex;gap:6px}
+
+/* ── Handoff 交接单 ── */
+.handoff{margin-bottom:12px;padding:12px;background:rgba(74,125,255,0.04);border:1px solid rgba(74,125,255,0.12);border-radius:var(--r2)}
+.handoff-section{margin-bottom:10px}
+.handoff-section:last-child{margin-bottom:0}
+.handoff-label{font-size:11px;font-weight:600;color:var(--text2);margin-bottom:4px}
+.handoff-field{font-size:12px;color:var(--text);padding:8px 10px;background:rgba(255,255,255,0.5);border:1px solid var(--border);border-radius:6px;min-height:32px;outline:none;transition:all .2s;line-height:1.5}
+.handoff-field:focus{border-color:var(--blue);box-shadow:0 0 0 2px rgba(74,125,255,0.08)}
+.handoff-field:empty::before{content:attr(data-placeholder);color:var(--text3);font-style:italic}
 .add-plan input{flex:1;padding:6px 10px;background:rgba(255,255,255,0.5);border:1px solid var(--border);border-radius:var(--r2);font-size:12px;outline:none;font-family:inherit}
 .add-plan input:focus{border-color:var(--blue)}
 
@@ -219,7 +228,29 @@ textarea.editor:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(74,125,
 
       <!-- Plan -->
       <div class="rb-panel active" id="tab-plan">
-        <div class="rb-body" id="planList"><div class="plan-empty">暂无计划项，下方添加</div></div>
+        <div class="rb-body" id="planList">
+          <!-- Handoff 交接单 -->
+          <div class="handoff" id="handoff">
+            <div class="handoff-section">
+              <div class="handoff-label">📋 当前任务</div>
+              <div class="handoff-field" contenteditable="true" id="hTask" data-placeholder="填写本次任务目标..."></div>
+            </div>
+            <div class="handoff-section">
+              <div class="handoff-label">💡 决策结论</div>
+              <div class="handoff-field" contenteditable="true" id="hDecision" data-placeholder="讨论后的关键决策..."></div>
+            </div>
+            <div class="handoff-section">
+              <div class="handoff-label">✅ 执行标准</div>
+              <div class="handoff-field" contenteditable="true" id="hCriteria" data-placeholder="验收标准，做到什么算完成..."></div>
+            </div>
+            <div class="handoff-section">
+              <div class="handoff-label">⚠️ 已知约束</div>
+              <div class="handoff-field" contenteditable="true" id="hConstraints" data-placeholder="限制条件、注意事项..."></div>
+            </div>
+          </div>
+          <!-- 计划项列表 -->
+          <div id="planItems"><div class="plan-empty">暂无计划项，下方添加</div></div>
+        </div>
         <div class="rb-foot">
           <div class="add-plan">
             <input id="planInput" placeholder="添加计划项..." onkeydown="if(event.key==='Enter')addPlanItem()">
@@ -361,36 +392,62 @@ function applyLayout() {
 // ── Plan + Execute 快捷启动 ──
 function startPlanExecute() {
   closeWelcome();
-  // 清空已有 agents
   stopAll();
   S.layout = 2; applyLayout();
 
-  // 创建 Planner
+  // 创建 Planner + Executor
   setTimeout(() => addAgent('planner', 'Planner'), 100);
-  // 创建 Executor
   setTimeout(() => addAgent('executor', 'Executor'), 400);
-  // 初始化 Plan
+
+  // 初始化 Handoff + Plan + Memory
   setTimeout(() => {
+    // Handoff 交接单
+    $('hTask').textContent = '';
+    $('hDecision').textContent = '';
+    $('hCriteria').textContent = '';
+    $('hConstraints').textContent = '';
+
+    // Plan 计划项
     send({ type: 'plan_update', data: { items: [
       { id: 'p1', title: '分析需求和现状', status: 'doing', assignee: 'planner' },
       { id: 'p2', title: '设计方案', status: 'todo', assignee: 'planner' },
       { id: 'p3', title: '执行实现', status: 'todo', assignee: 'executor' },
       { id: 'p4', title: '验证结果', status: 'todo', assignee: 'executor' },
     ]}});
-    // 初始化共享记忆
+
+    // 共享记忆
     send({ type: 'memory_write', key: null, value: {
       mode: 'plan-execute',
       planner: 'a1 (分析、设计、规划)',
       executor: 'a2 (执行、实现、验证)',
       planFile: 'shared/plan.json',
+      handoff: '右侧面板填写交接单，Planner 自动读取',
       note: 'Planner 写计划 → Executor 读取并执行 → 结果回写记忆'
     }});
   }, 800);
 }
 
+// Handoff 交接单持久化
+function saveHandoff() {
+  const data = {
+    task: $('hTask').textContent,
+    decision: $('hDecision').textContent,
+    criteria: $('hCriteria').textContent,
+    constraints: $('hConstraints').textContent,
+  };
+  send({ type: 'memory_write', key: 'handoff', value: data });
+}
+
+// 监听 handoff 编辑
+document.querySelectorAll('.handoff-field').forEach(el => {
+  el.addEventListener('blur', saveHandoff);
+  el.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); el.blur(); } });
+});
+
 // ── Plan 渲染 ──
 function renderPlan() {
-  const el = $('planList');
+  const el = $('planItems');
+  if (!el) return;
   if (!S.plan.items.length) { el.innerHTML = '<div class="plan-empty">暂无计划项</div>'; return; }
   el.innerHTML = S.plan.items.map(item => {
     const cls = item.status === 'done' ? 'done' : item.status === 'doing' ? 'doing' : '';
