@@ -520,12 +520,6 @@ function buildClaudePanel(id, label, role) {
       redraw();
     }
   });
-    } else if (d >= ' ' && d !== '\x1b') {  // 可打印字符
-      inputBuffer = inputBuffer.slice(0, cursorPos) + d + inputBuffer.slice(cursorPos);
-      cursorPos++;
-      redrawLine();
-    }
-  });
 
   S.agents.set(id, { term, fit, label, role, alive: true, type: 'claude' });
   el.addEventListener('click', () => focusPanel(id));
