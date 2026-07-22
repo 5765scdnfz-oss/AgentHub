@@ -1,0 +1,7 @@
+node_modules/
+shared/memory.json
+shared/messages.json
+shared/plan.json
+shared/progress.json
+server.log
+*.log
