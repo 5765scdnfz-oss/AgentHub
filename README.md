@@ -6,6 +6,15 @@
 
 AgentHub 解决的核心问题：**规划（Plan）和执行（Execute）在 Claude Code 中是串行的，AgentHub 让它们并行运行，且支持多人协作规划。**
 
+## 分支策略
+
+| 分支 | 用途 | 状态 |
+|---|---|---|
+| `main` | 核心功能（Plan+Execute+多人协作），不依赖任何 AI 服务 | ✅ 开发中 |
+| `claude-integration` | Claude 集成（Desktop MCP / API / 浏览器扩展） | 📋 待开发 |
+
+**核心原则：** `main` 分支永远不依赖 Claude。Claude 集成在独立分支开发，稳定后合并。
+
 ## 为什么需要 AgentHub？
 
 | 痛点 | 现有方案 | AgentHub |
