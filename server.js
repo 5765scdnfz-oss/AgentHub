@@ -136,12 +136,23 @@ ${JSON.stringify(mem, null, 2)}
     // 兼容 thinking + text 两种响应格式
     const textBlock = data.content?.find(b => b.type === 'text');
     const thinkBlock = data.content?.find(b => b.type === 'thinking');
-    const reply = textBlock?.text || thinkBlock?.thinking || '无响应';
+    let reply = textBlock?.text || thinkBlock?.thinking || '无响应';
+
+    // 清理格式：去掉过长的换行，保留段落结构
+    reply = reply
+      .replace(/\n{3,}/g, '\n\n')  // 最多连续2个换行
+      .replace(/[ \t]+\n/g, '\n')  // 去掉行尾空格
+      .trim();
 
     agent.history.push({ role: 'assistant', content: reply });
 
-    // 输出到终端
-    broadcast({ type: 'output', id: agentId, data: `\r\n\x1b[32m[Claude]\x1b[0m ${reply}\r\n\r\n` });
+    // 输出到终端（逐行发送，避免乱码）
+    const lines = reply.split('\n');
+    broadcast({ type: 'output', id: agentId, data: `\r\n` });
+    for (const line of lines) {
+      broadcast({ type: 'output', id: agentId, data: `\x1b[32m${line}\x1b[0m\r\n` });
+    }
+    broadcast({ type: 'output', id: agentId, data: `\r\n` });
 
     // 检测是否需要添加计划项
     const planMatch = reply.match(/\[PLAN_ADD\]\s*(\{[^}]+\})/g);

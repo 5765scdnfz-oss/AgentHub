@@ -393,19 +393,21 @@ function applyLayout() {
 function startPlanExecute() {
   closeWelcome();
   stopAll();
-  S.layout = 2; applyLayout();
 
-  // 创建 Claude Planner (API) + Executor (终端)
-  setTimeout(() => addClaudeAgent('planner', 'Claude-Planner'), 100);
-  setTimeout(() => addAgent('executor', 'Executor'), 400);
+  // 设置布局
+  S.layout = 2;
 
-  // 初始化 Handoff + Plan + Memory
+  // 创建 Claude Planner (API)
+  addClaudeAgent('planner', 'Claude-Planner');
+
+  // 创建 Executor (终端) - 延迟确保布局就绪
   setTimeout(() => {
-    $('hTask').textContent = '';
-    $('hDecision').textContent = '';
-    $('hCriteria').textContent = '';
-    $('hConstraints').textContent = '';
+    addAgent('executor', 'Executor');
+    applyLayout();
+  }, 300);
 
+  // 初始化 Plan + Memory
+  setTimeout(() => {
     send({ type: 'plan_update', data: { items: [
       { id: 'p1', title: '分析需求和现状', status: 'doing', assignee: 'Claude-Planner' },
       { id: 'p2', title: '设计方案', status: 'todo', assignee: 'Claude-Planner' },
@@ -419,7 +421,7 @@ function startPlanExecute() {
       executor: 'Executor (终端)',
       note: 'Claude 自动分析计划并回复，Executor 在终端执行'
     }});
-  }, 800);
+  }, 600);
 }
 
 // ── Claude Agent ──
@@ -449,19 +451,29 @@ function buildClaudePanel(id, label, role) {
 
   // Claude Agent 的输入方式：回车发送消息
   let inputBuffer = '';
+  const prompt = '> ';
+  term.write(prompt);
+
   term.onData(d => {
-    if (d === '\r') {  // 回车
+    // 处理特殊按键
+    if (d === '\r' || d === '\n') {  // 回车
       if (inputBuffer.trim()) {
-        send({ type: 'claude_input', id, text: inputBuffer.trim() });
         term.write(`\r\n`);
+        send({ type: 'claude_input', id, text: inputBuffer.trim() });
       }
       inputBuffer = '';
-    } else if (d === '\x7f') {  // Backspace
+      term.write(prompt);
+    } else if (d === '\x7f' || d === '\b') {  // Backspace (两种编码)
       if (inputBuffer.length > 0) {
         inputBuffer = inputBuffer.slice(0, -1);
         term.write('\b \b');
       }
-    } else if (d >= ' ') {
+    } else if (d === '\x15') {  // Ctrl+U 清空当前行
+      while (inputBuffer.length > 0) {
+        inputBuffer = inputBuffer.slice(0, -1);
+        term.write('\b \b');
+      }
+    } else if (d >= ' ' && d !== '\x1b') {  // 可打印字符（排除方向键）
       inputBuffer += d;
       term.write(d);
     }
