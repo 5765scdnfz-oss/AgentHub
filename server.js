@@ -186,28 +186,39 @@ async function callClaude(agentId, userMessage) {
   // 根据角色不同的系统提示
   let systemPrompt;
   if (agent.role === 'planner') {
-    systemPrompt = `你是 Planner Agent，负责分析需求、设计方案。
+    systemPrompt = `你是 Planner Agent。收到用户需求后，立即拆解为计划项并添加，不要等确认。
 
 当前计划：
 ${planText}
 
-你的职责：
-- 分析用户需求，拆解为可执行的计划项
-- 回复简洁，用中文
-- 需要添加计划项时输出：[PLAN_ADD] {"title":"xxx","assignee":"executor"}
-- 需要读取文件时输出：[READ] 文件相对路径
-- 需要搜索文件时输出：[SEARCH] 关键词`;
+工作方式：
+1. 收到需求 → 立即用 [PLAN_ADD] 添加所有计划项
+2. 需要找文件 → 用 [SEARCH] 关键词
+3. 需要读文件 → 用 [READ] 文件路径
+4. 回复简洁，用中文，不要废话
+
+命令格式：
+- [PLAN_ADD] {"title":"xxx","assignee":"executor"}
+- [SEARCH] 关键词
+- [READ] 文件相对路径
+
+重要：不要问用户确认，直接行动。计划项添加后 Executor 会自动执行。`;
   } else {
     systemPrompt = `你是 Executor Agent，负责执行计划中的任务。
 
 当前计划：
 ${planText}
 
-你的职责：
-- 执行分配给你的计划项
-- 回复简洁，用中文，说明你做了什么
-- 需要读取文件时输出：[READ] 文件相对路径
-- 完成后说明结果`;
+工作方式：
+1. 收到任务 → 立即执行
+2. 需要读文件 → 用 [READ] 文件路径
+3. 完成后说明做了什么、结果如何
+4. 回复简洁，用中文
+
+命令格式：
+- [READ] 文件相对路径
+
+重要：不要问问题，直接执行。`;
   }
 
   agent.history.push({ role: 'user', content: userMessage });
@@ -289,19 +300,24 @@ ${planText}
         continue;  // 不显示给用户
       }
 
-      // [SEARCH] — 静默搜索
+      // [SEARCH] — 静默搜索（Windows 兼容）
       if (trimmed.startsWith('[SEARCH]')) {
         const keyword = trimmed.replace('[SEARCH]', '').trim();
         try {
           const { execSync } = require('child_process');
-          const result = execSync(`find "${WORK_DIR}" -name "*${keyword}*" -type f 2>/dev/null | head -10`, { encoding: 'utf-8', timeout: 5000 });
+          // Windows 用 dir /s /b，其他用 find
+          const isWin = process.platform === 'win32';
+          const cmd = isWin
+            ? `cmd /c "dir /s /b "${WORK_DIR}\\*${keyword}*"" 2>nul | head -15`
+            : `find "${WORK_DIR}" -name "*${keyword}*" 2>/dev/null | head -15`;
+          const result = execSync(cmd, { encoding: 'utf-8', timeout: 8000 });
           agent.history.push({ role: 'user', content: `[搜索 "${keyword}" 结果]\n${result || '未找到'}` });
           needRecurse = true;
         } catch (e) {
           agent.history.push({ role: 'user', content: `[搜索失败: ${e.message}]` });
           needRecurse = true;
         }
-        continue;  // 不显示给用户
+        continue;
       }
 
       // 过滤掉格式标记行
