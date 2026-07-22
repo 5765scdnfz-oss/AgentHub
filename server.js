@@ -111,8 +111,8 @@ function pushPlanChangesToExecutor(changes) {
         for (const change of changesToPush) {
           const text = formatPlanChange(change);
           if (text) {
-            // 追加显示，使用 \r\n 确保新行
-            agent.proc.write(`\r\n\x1b[36m${text}\x1b[0m\r\n`);
+            // 使用光标保存/恢复，避免打断用户正在输入的内容
+            agent.proc.write(`\x1b[s\r\n\x1b[36m${text}\x1b[0m\r\n\x1b[u`);
           }
         }
         break;  // 只推送到第一个 Executor
