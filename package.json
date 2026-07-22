@@ -1,12 +1,49 @@
 {
   "name": "agent-hub",
   "version": "1.0.0",
-  "main": "server.js",
+  "description": "Multi-user Plan+Execute Agent Orchestration Platform",
+  "main": "main.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "electron": "electron .",
+    "build": "electron-builder --win",
+    "build:mac": "electron-builder --mac"
   },
   "dependencies": {
     "node-pty": "^1.1.0",
     "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "electron": "^43.2.0",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "com.agenthub.app",
+    "productName": "AgentHub",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "server.js",
+      "index.html",
+      "shared/**/*",
+      "agenthub.ico",
+      "node_modules/**/*"
+    ],
+    "win": {
+      "icon": "agenthub.ico",
+      "target": "nsis"
+    },
+    "mac": {
+      "icon": "agenthub.ico",
+      "target": "dmg"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "AgentHub"
+    }
   }
 }
