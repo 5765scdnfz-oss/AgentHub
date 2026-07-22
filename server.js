@@ -223,61 +223,94 @@ ${workspaceCtx}
     });
 
     const data = await response.json();
-    // 兼容 thinking + text 两种响应格式
     const textBlock = data.content?.find(b => b.type === 'text');
     const thinkBlock = data.content?.find(b => b.type === 'thinking');
     let reply = textBlock?.text || thinkBlock?.thinking || '无响应';
 
-    // 清理格式：去掉过长的换行，保留段落结构
-    reply = reply
-      .replace(/\n{3,}/g, '\n\n')  // 最多连续2个换行
-      .replace(/[ \t]+\n/g, '\n')  // 去掉行尾空格
-      .trim();
+    // 清理格式
+    reply = reply.replace(/\n{3,}/g, '\n\n').replace(/[ \t]+\n/g, '\n').trim();
 
     agent.history.push({ role: 'assistant', content: reply });
 
-    // 输出到终端（逐行发送，避免乱码）
+    // ── 分离：内部命令 vs 干净回复 ──
     const lines = reply.split('\n');
-    broadcast({ type: 'output', id: agentId, data: `\r\n` });
-    for (const line of lines) {
-      broadcast({ type: 'output', id: agentId, data: `\x1b[32m${line}\x1b[0m\r\n` });
-    }
-    broadcast({ type: 'output', id: agentId, data: `\r\n` });
+    const cleanLines = [];      // 发给用户的干净文字
+    let needRecurse = false;    // 是否需要递归调用
 
-    // 检测是否需要添加计划项
-    const planMatch = reply.match(/\[PLAN_ADD\]\s*(\{[^}]+\})/g);
-    if (planMatch) {
-      for (const m of planMatch) {
+    for (const line of lines) {
+      const trimmed = line.trim();
+
+      // [PLAN_ADD] — 静默处理
+      if (trimmed.startsWith('[PLAN_ADD]')) {
         try {
-          const item = JSON.parse(m.replace('[PLAN_ADD] ', ''));
+          const item = JSON.parse(trimmed.replace('[PLAN_ADD] ', ''));
           const plan = readJSON(PLAN_FILE);
           plan.items = plan.items || [];
           plan.items.push({ id: 'p' + Date.now(), title: item.title, status: 'todo', assignee: item.assignee || 'executor' });
           writeJSON(PLAN_FILE, plan);
           broadcast({ type: 'plan_update', data: plan });
-          broadcast({ type: 'output', id: agentId, data: `\x1b[36m[自动] 已添加计划项: ${item.title}\x1b[0m\r\n` });
         } catch {}
+        continue;  // 不显示给用户
       }
+
+      // [READ] — 静默读取文件
+      if (trimmed.startsWith('[READ]')) {
+        const filePath = trimmed.replace('[READ]', '').trim();
+        if (filePath && !filePath.includes('/')) {
+          // 文件路径，不是目录
+          const content = readFile(filePath);
+          agent.history.push({ role: 'user', content: `[文件内容: ${filePath}]\n${content}` });
+          needRecurse = true;
+        } else {
+          // 目录路径，列出内容
+          try {
+            const dirPath = path.join(WORK_DIR, filePath || '');
+            const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+            const listing = entries.slice(0, 30).map(e => e.isDirectory() ? `📁 ${e.name}/` : `📄 ${e.name}`).join('\n');
+            agent.history.push({ role: 'user', content: `[目录: ${filePath}]\n${listing}` });
+            needRecurse = true;
+          } catch (e) {
+            agent.history.push({ role: 'user', content: `[读取失败: ${e.message}]` });
+            needRecurse = true;
+          }
+        }
+        continue;  // 不显示给用户
+      }
+
+      // [SEARCH] — 静默搜索
+      if (trimmed.startsWith('[SEARCH]')) {
+        const keyword = trimmed.replace('[SEARCH]', '').trim();
+        try {
+          const { execSync } = require('child_process');
+          const result = execSync(`find "${WORK_DIR}" -name "*${keyword}*" -type f 2>/dev/null | head -10`, { encoding: 'utf-8', timeout: 5000 });
+          agent.history.push({ role: 'user', content: `[搜索 "${keyword}" 结果]\n${result || '未找到'}` });
+          needRecurse = true;
+        } catch (e) {
+          agent.history.push({ role: 'user', content: `[搜索失败: ${e.message}]` });
+          needRecurse = true;
+        }
+        continue;  // 不显示给用户
+      }
+
+      // 过滤掉格式标记行
+      if (trimmed === '---' || trimmed === '```') continue;
+
+      // 其他内容 = 干净回复
+      cleanLines.push(line);
     }
 
-    // 检测 [READ] 文件读取请求
-    const readMatch = reply.match(/\[READ\]\s*(.+)/g);
-    if (readMatch) {
-      for (const m of readMatch) {
-        const filePath = m.replace('[READ] ', '').trim();
-        const content = readFile(filePath);
-        broadcast({ type: 'output', id: agentId, data: `\x1b[36m[文件] ${filePath}:\x1b[0m\r\n` });
-        broadcast({ type: 'output', id: agentId, data: content + '\r\n' });
-        // 自动把文件内容加入对话历史
-        agent.history.push({ role: 'user', content: `[文件内容: ${filePath}]\n${content}` });
-        // 再次调用 Claude 让它基于文件内容回复
-        callClaude(agentId, `我已经读取了 ${filePath} 的内容，请基于此继续分析。`);
-        return;  // 避免重复发消息
-      }
+    // ── 只把干净回复发给前端 ──
+    const cleanReply = cleanLines.join('\n').trim();
+    if (cleanReply) {
+      broadcast({ type: 'output', id: agentId, data: cleanReply });
+      broadcast({ type: 'message', from: agent.label, to: '*', text: cleanReply, time: new Date().toISOString() });
     }
 
-    // 自动发消息到聊天室
-    broadcast({ type: 'message', from: agent.label, to: '*', text: reply, time: new Date().toISOString() });
+    // 如果有文件读取/搜索，递归调用让 Claude 基于结果继续
+    if (needRecurse) {
+      callClaude(agentId, '请基于上面读取到的内容继续分析。');
+      return;
+    }
 
   } catch (err) {
     broadcast({ type: 'output', id: agentId, data: `\x1b[31m[错误] ${err.message}\x1b[0m\r\n` });
