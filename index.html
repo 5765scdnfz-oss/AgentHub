@@ -452,10 +452,17 @@ function buildClaudePanel(id, label, role) {
   // Claude Agent 的输入方式：回车发送消息
   let inputBuffer = '';
   const prompt = '> ';
+
+  function redrawLine() {
+    // 清除当前行并重绘：\r 回到行首，写 prompt + 输入内容，用空格覆盖剩余
+    const full = prompt + inputBuffer;
+    const pad = Math.max(0, 80 - full.length);  // 用空格覆盖旧内容
+    term.write('\r' + full + ' '.repeat(pad) + '\r' + full);
+  }
+
   term.write(prompt);
 
   term.onData(d => {
-    // 处理特殊按键
     if (d === '\r' || d === '\n') {  // 回车
       if (inputBuffer.trim()) {
         term.write(`\r\n`);
@@ -463,19 +470,17 @@ function buildClaudePanel(id, label, role) {
       }
       inputBuffer = '';
       term.write(prompt);
-    } else if (d === '\x7f' || d === '\b') {  // Backspace (两种编码)
+    } else if (d === '\x7f' || d === '\b') {  // Backspace
       if (inputBuffer.length > 0) {
         inputBuffer = inputBuffer.slice(0, -1);
-        term.write('\b \b');
+        redrawLine();
       }
-    } else if (d === '\x15') {  // Ctrl+U 清空当前行
-      while (inputBuffer.length > 0) {
-        inputBuffer = inputBuffer.slice(0, -1);
-        term.write('\b \b');
-      }
-    } else if (d >= ' ' && d !== '\x1b') {  // 可打印字符（排除方向键）
+    } else if (d === '\x15') {  // Ctrl+U 清空
+      inputBuffer = '';
+      redrawLine();
+    } else if (d >= ' ' && d !== '\x1b') {  // 可打印字符
       inputBuffer += d;
-      term.write(d);
+      redrawLine();
     }
   });
 
