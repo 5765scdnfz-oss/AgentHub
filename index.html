@@ -80,6 +80,20 @@ body::before{content:'';position:fixed;top:-120px;right:-120px;width:400px;heigh
 .panel-head .btn.x:hover{color:var(--red);background:var(--red-bg)}
 .panel-body{flex:1;overflow:hidden;background:rgba(12,16,24,0.94);border-radius:0 0 var(--r) var(--r)}
 
+/* ── Claude Agent 聊天界面 ── */
+.claude-body{flex:1;display:flex;flex-direction:column;overflow:hidden;background:rgba(240,242,245,0.95);border-radius:0 0 var(--r) var(--r)}
+.claude-messages{flex:1;overflow-y:auto;padding:12px;font-size:12px}
+.claude-msg{margin-bottom:10px;max-width:85%}
+.claude-msg.user{margin-left:auto;text-align:right}
+.claude-msg-label{font-size:10px;color:var(--text3);margin-bottom:2px;font-weight:600}
+.claude-msg-text{padding:8px 12px;border-radius:10px;line-height:1.5;word-break:break-word}
+.claude-msg.user .claude-msg-text{background:var(--blue);color:#fff;border-bottom-right-radius:2px}
+.claude-msg.assistant .claude-msg-text{background:rgba(255,255,255,0.8);color:var(--text);border:1px solid var(--border);border-bottom-left-radius:2px}
+.claude-msg.thinking .claude-msg-text{color:var(--text3);font-style:italic;background:transparent}
+.claude-input-row{display:flex;gap:6px;padding:10px 12px;border-top:1px solid var(--border);background:rgba(255,255,255,0.5)}
+.claude-input{flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:var(--r2);font-size:12px;outline:none;font-family:inherit;background:rgba(255,255,255,0.7);transition:all .2s}
+.claude-input:focus{border-color:var(--blue);box-shadow:0 0 0 2px rgba(74,125,255,0.1)}
+
 /* ── Right Sidebar ── */
 .rightbar{width:320px;background:var(--glass);backdrop-filter:blur(30px);border-left:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden;transition:width .2s}
 .rightbar.hide{width:0;border:none}
@@ -311,7 +325,20 @@ function connect() {
   ws.onmessage = e => {
     let m; try { m = JSON.parse(e.data) } catch { return };
     const h = {
-      output: () => { const a = S.agents.get(m.id); if (a && a.term) a.term.write(m.data); },
+      output: () => {
+        const a = S.agents.get(m.id);
+        if (!a) return;
+        if (a.type === 'claude') {
+          // Claude Agent 的输出 — 解析并显示为聊天气泡
+          const text = m.data.replace(/\x1b\[[0-9;]*m/g, '').replace(/\r\n/g, '\n').replace(/\r/g, '').trim();
+          if (text && !text.startsWith('[Claude Agent]') && !text.startsWith('等待消息') && !text.startsWith('[Claude 思考') && !text.startsWith('[自动]') && !text.startsWith('[文件]') && !text.startsWith('[系统通知]')) {
+            showClaudeReply(m.id, text);
+          }
+        } else {
+          // 终端 Agent
+          if (a.term) a.term.write(m.data);
+        }
+      },
       exit: () => {
         const a = S.agents.get(m.id);
         if (a) { a.alive = false; if (a.term) a.term.write(`\r\n\x1b[31m[退出 ${m.code}]\x1b[0m\r\n`); }
@@ -434,81 +461,42 @@ function addClaudeAgent(role, label) {
 
 function buildClaudePanel(id, label, role) {
   const el = document.createElement('div'); el.className = 'panel'; el.id = 'p-' + id;
-  el.innerHTML = `<div class="panel-head"><div class="dot running"></div><span class="role-tag ${role}">${role}</span><div class="panel-title">${label}</div><button class="btn" onclick="focusPanel('${id}')">⊙</button><button class="btn x" onclick="rmAgent('${id}')">×</button></div><div class="panel-body" id="tb-${id}"></div>`;
+  el.innerHTML = `<div class="panel-head"><div class="dot running"></div><span class="role-tag ${role}">${role}</span><div class="panel-title">${label}</div><button class="btn x" onclick="rmAgent('${id}')">×</button></div><div class="claude-body" id="tb-${id}"><div class="claude-messages" id="msgs-${id}"></div><div class="claude-input-row"><input class="claude-input" id="inp-${id}" placeholder="输入消息，回车发送..." onkeydown="if(event.key==='Enter')sendClaudeMsg('${id}')"><button class="btn" onclick="sendClaudeMsg('${id}')">发送</button></div></div>`;
   $('grid').appendChild(el);
 
-  const term = new Terminal({
-    cursorBlink: true, fontSize: 13,
-    fontFamily: "'Cascadia Code','Fira Code',Consolas,monospace",
-    theme: { background:'#0c1018', foreground:'#e0e4ea', cursor:'#4a7dff', selectionBackground:'#264f78',
-      black:'#3a4a60', red:'#ff6b7a', green:'#44dd88', yellow:'#ffbb44', blue:'#4a7dff', magenta:'#bb88ff', cyan:'#44cccc', white:'#ccd0d8',
-      brightBlack:'#556677', brightRed:'#ff8899', brightGreen:'#66eeaa', brightYellow:'#ffcc66', brightBlue:'#77ccff', brightMagenta:'#dd99ff', brightCyan:'#66dddd', brightWhite:'#eef0f4' },
-  });
-  const fit = new FitAddon.FitAddon(); term.loadAddon(fit);
-  const box = $('tb-' + id); term.open(box);
+  // 自动聚焦输入框
+  setTimeout(() => { const inp = $('inp-' + id); if (inp) inp.focus(); }, 100);
 
-  // 确保终端获得焦点
-  box.addEventListener('click', () => term.focus());
-  setTimeout(() => { try { fit.fit(); term.focus(); } catch {} }, 100);
-  new ResizeObserver(() => { try { fit.fit() } catch {} }).observe(box);
+  S.agents.set(id, { label, role, alive: true, type: 'claude' });
+  el.addEventListener('click', () => { const inp = $('inp-' + id); if (inp) inp.focus(); });
+}
 
-  // Claude Agent 输入处理
-  let inputBuffer = '';
-  const prompt = '> ';
+function sendClaudeMsg(id) {
+  const inp = $('inp-' + id);
+  const text = inp.value.trim();
+  if (!text) return;
 
-  // 等终端就绪后写提示符
-  setTimeout(() => { term.write(prompt); }, 150);
+  // 显示用户消息
+  const msgs = $('msgs-' + id);
+  msgs.innerHTML += `<div class="claude-msg user"><div class="claude-msg-label">你</div><div class="claude-msg-text">${esc(text)}</div></div>`;
 
-  term.onData(d => {
-    // 忽略方向键
-    if (d.startsWith('\x1b[')) return;
+  // 显示思考中
+  msgs.innerHTML += `<div class="claude-msg thinking" id="think-${id}"><div class="claude-msg-label">Claude</div><div class="claude-msg-text">思考中...</div></div>`;
+  msgs.scrollTop = msgs.scrollHeight;
 
-    // 回车
-    if (d === '\r' || d === '\n') {
-      if (inputBuffer.trim()) {
-        term.write('\r\n');
-        send({ type: 'claude_input', id, text: inputBuffer.trim() });
-      }
-      inputBuffer = '';
-      term.write(prompt);
-      return;
-    }
+  inp.value = '';
+  send({ type: 'claude_input', id, text });
+}
 
-    // Backspace
-    if (d === '\x7f' || d === '\b') {
-      if (inputBuffer.length > 0) {
-        inputBuffer = inputBuffer.slice(0, -1);
-        term.write('\b \b');
-      }
-      return;
-    }
-
-    // Ctrl+U 清空
-    if (d === '\x15') {
-      while (inputBuffer.length > 0) {
-        inputBuffer = inputBuffer.slice(0, -1);
-        term.write('\b \b');
-      }
-      return;
-    }
-
-    // Ctrl+C
-    if (d === '\x03') {
-      inputBuffer = '';
-      term.write('^C\r\n' + prompt);
-      return;
-    }
-
-    // 可打印字符
-    if (d.length === 1 && d >= ' ') {
-      inputBuffer += d;
-      term.write(d);
-    }
-  });
-
-  S.agents.set(id, { term, fit, label, role, alive: true, type: 'claude' });
-  el.addEventListener('click', () => focusPanel(id));
-  focusPanel(id);
+// 接收 Claude 回复（在 WebSocket 消息处理中调用）
+function showClaudeReply(id, text) {
+  const msgs = $('msgs-' + id);
+  // 移除思考中
+  const think = document.getElementById('think-' + id);
+  if (think) think.remove();
+  // 显示回复
+  msgs.innerHTML += `<div class="claude-msg assistant"><div class="claude-msg-label">Claude</div><div class="claude-msg-text">${esc(text).replace(/\n/g, '<br>')}</div></div>`;
+  msgs.scrollTop = msgs.scrollHeight;
 }
 
 // Handoff 交接单持久化
