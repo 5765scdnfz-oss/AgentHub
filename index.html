@@ -446,19 +446,24 @@ function buildClaudePanel(id, label, role) {
   });
   const fit = new FitAddon.FitAddon(); term.loadAddon(fit);
   const box = $('tb-' + id); term.open(box);
-  setTimeout(() => { try { fit.fit() } catch {} }, 50);
+
+  // 确保终端获得焦点
+  box.addEventListener('click', () => term.focus());
+  setTimeout(() => { try { fit.fit(); term.focus(); } catch {} }, 100);
   new ResizeObserver(() => { try { fit.fit() } catch {} }).observe(box);
 
-  // Claude Agent 输入处理 — 最简单方式
+  // Claude Agent 输入处理
   let inputBuffer = '';
   const prompt = '> ';
-  term.write('\r\n' + prompt);
+
+  // 等终端就绪后写提示符
+  setTimeout(() => { term.write(prompt); }, 150);
 
   term.onData(d => {
-    // 方向键 — 暂不支持光标移动，忽略
+    // 忽略方向键
     if (d.startsWith('\x1b[')) return;
 
-    // 回车 — 发送消息
+    // 回车
     if (d === '\r' || d === '\n') {
       if (inputBuffer.trim()) {
         term.write('\r\n');
@@ -469,7 +474,7 @@ function buildClaudePanel(id, label, role) {
       return;
     }
 
-    // Backspace — 删除最后一个字符
+    // Backspace
     if (d === '\x7f' || d === '\b') {
       if (inputBuffer.length > 0) {
         inputBuffer = inputBuffer.slice(0, -1);
@@ -478,7 +483,7 @@ function buildClaudePanel(id, label, role) {
       return;
     }
 
-    // Ctrl+U — 清空
+    // Ctrl+U 清空
     if (d === '\x15') {
       while (inputBuffer.length > 0) {
         inputBuffer = inputBuffer.slice(0, -1);
@@ -494,7 +499,7 @@ function buildClaudePanel(id, label, role) {
       return;
     }
 
-    // 可打印字符 — 直接写入终端
+    // 可打印字符
     if (d.length === 1 && d >= ' ') {
       inputBuffer += d;
       term.write(d);
