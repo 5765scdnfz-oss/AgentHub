@@ -449,64 +449,77 @@ function buildClaudePanel(id, label, role) {
   setTimeout(() => { try { fit.fit() } catch {} }, 50);
   new ResizeObserver(() => { try { fit.fit() } catch {} }).observe(box);
 
-  // Claude Agent 的输入方式：回车发送消息
+  // Claude Agent 输入处理
   let inputBuffer = '';
-  let cursorPos = 0;  // 光标在 inputBuffer 中的位置
-  let escBuf = '';     // escape 序列缓冲
+  let cursorPos = 0;
   const prompt = '> ';
 
-  function redrawLine() {
-    const full = prompt + inputBuffer;
-    const pad = Math.max(0, 80 - full.length);
-    term.write('\r' + full + ' '.repeat(pad) + '\r');
-    // 移动光标到正确位置
-    const target = prompt.length + cursorPos;
-    if (target > 0) term.write('\x1b[' + target + 'C');
+  // 完全重绘当前行
+  function redraw() {
+    // \r 回到行首，写 prompt + 内容，用空格覆盖旧内容，再 \r 回到行首
+    term.write('\r\x1b[K' + prompt + inputBuffer);
+    // 移动光标到 cursorPos 位置
+    const col = prompt.length + cursorPos;
+    term.write('\r');
+    if (col > 0) term.write('\x1b[' + col + 'C');
   }
 
   term.write(prompt);
 
   term.onData(d => {
-    // 处理 escape 序列（方向键）
-    if (d === '\x1b') { escBuf = '\x1b'; return; }
-    if (escBuf === '\x1b' && d === '[') { escBuf = '\x1b['; return; }
-    if (escBuf === '\x1b[') {
-      escBuf = '';
-      if (d === 'D') {  // ← 左移光标
-        if (cursorPos > 0) { cursorPos--; term.write('\x1b[D'); }
-      } else if (d === 'C') {  // → 右移光标
-        if (cursorPos < inputBuffer.length) { cursorPos++; term.write('\x1b[C'); }
-      } else if (d === 'A') {  // ↑ 历史上一条
-        // 未来可加
-      } else if (d === 'B') {  // ↓ 历史下一条
-        // 未来可加
-      }
+    // 方向键：xterm.js 发送完整 escape 序列
+    if (d === '\x1b[D') {  // ← 左
+      if (cursorPos > 0) { cursorPos--; redraw(); }
       return;
     }
-    escBuf = '';
+    if (d === '\x1b[C') {  // → 右
+      if (cursorPos < inputBuffer.length) { cursorPos++; redraw(); }
+      return;
+    }
+    if (d === '\x1b[A' || d === '\x1b[B') { return; }  // ↑↓ 忽略
 
-    if (d === '\r' || d === '\n') {  // 回车
+    // 回车
+    if (d === '\r' || d === '\n') {
       if (inputBuffer.trim()) {
-        term.write(`\r\n`);
+        term.write('\r\n');
         send({ type: 'claude_input', id, text: inputBuffer.trim() });
       }
-      inputBuffer = '';
-      cursorPos = 0;
+      inputBuffer = ''; cursorPos = 0;
       term.write(prompt);
-    } else if (d === '\x7f' || d === '\b') {  // Backspace
+      return;
+    }
+
+    // Backspace
+    if (d === '\x7f' || d === '\b') {
       if (cursorPos > 0) {
         inputBuffer = inputBuffer.slice(0, cursorPos - 1) + inputBuffer.slice(cursorPos);
         cursorPos--;
-        redrawLine();
+        redraw();
       }
-    } else if (d === '\x15') {  // Ctrl+U 清空
-      inputBuffer = '';
-      cursorPos = 0;
-      redrawLine();
-    } else if (d === '\x03') {  // Ctrl+C 取消
-      inputBuffer = '';
-      cursorPos = 0;
+      return;
+    }
+
+    // Ctrl+U 清行
+    if (d === '\x15') {
+      inputBuffer = ''; cursorPos = 0;
+      redraw();
+      return;
+    }
+
+    // Ctrl+C
+    if (d === '\x03') {
+      inputBuffer = ''; cursorPos = 0;
       term.write('^C\r\n' + prompt);
+      return;
+    }
+
+    // 可打印字符（逐字符处理）
+    if (d.length === 1 && d >= ' ') {
+      inputBuffer = inputBuffer.slice(0, cursorPos) + d + inputBuffer.slice(cursorPos);
+      cursorPos++;
+      redraw();
+    }
+  });
     } else if (d >= ' ' && d !== '\x1b') {  // 可打印字符
       inputBuffer = inputBuffer.slice(0, cursorPos) + d + inputBuffer.slice(cursorPos);
       cursorPos++;
