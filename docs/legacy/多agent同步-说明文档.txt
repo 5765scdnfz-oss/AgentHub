@@ -1,0 +1,233 @@
+CC + Claude Desktop 全自动记忆同步方案
+========================================
+适用于 macOS，CC（Claude Code）+ Claude Desktop 双端协作
+
+
+一、解决什么问题
+----------------
+
+你同时用 CC（命令行）和 Claude Desktop（GUI）做同一个项目。
+它们各自有独立的上下文和记忆，互不相通。
+
+本方案让两边共享同一份"项目记忆"，全自动同步，零手动。
+
+
+二、架构图
+----------
+
+    CC (Claude Code)                    Claude Desktop
+    ┌─────────────────┐                ┌─────────────────┐
+    │ memory/         │                │ Project         │
+    │  ├── MEMORY.md  │                │ Instructions    │
+    │  ├── project_*.md│               │    ↓            │
+    │  ├── skill_*.md │                │ 读取 MCP 文件   │
+    │  └── ...        │                │    ↓            │
+    │ CLAUDE.md       │                │ 自动获得上下文   │
+    └────────┬────────┘                └────────┬────────┘
+             │                                  │
+             │    scripts/export_context.py      │
+             │  ────────────────────────────→    │
+             │                                  │
+             ▼                                  ▼
+    ┌─────────────────────────────────────────────┐
+    │              .shared/ 目录                   │
+    │  ├── context.md    ← 项目背景（自动生成）    │
+    │  ├── handoff.md    ← 交接单（手动填写）      │
+    │  └── progress.md   ← 进度（自动生成）        │
+    └─────────────────────────────────────────────┘
+                        ↑
+                   MCP 文件系统
+                   （Claude Desktop 自动读取）
+
+
+三、文件说明
+------------
+
+1. setup.sh
+   一键部署脚本。做的事情：
+   - 创建 .shared/ 目录和模板文件
+   - 部署 export_context.py 到 scripts/
+   - 配置 Claude Desktop 的 MCP 文件系统服务器
+   - 运行首次导出
+
+   使用方法：
+     chmod +x setup.sh
+     ./setup.sh
+     按提示输入项目路径（或直接回车用默认值）
+
+2. scripts/export_context.py
+   导出脚本。做的事情：
+   - 读取 CC 的 memory/ 目录下所有记忆文件
+   - 读取 CLAUDE.md 中的关键段落（铁律、架构、Skill 体系）
+   - 生成精简版 context.md 和 progress.md 到 .shared/
+
+   使用方法：
+     python3 scripts/export_context.py
+
+   什么时候跑：
+   - CC 会话结束时（可配置在会话收割 skill 中自动执行）
+   - 或者手动跑一次
+
+3. .shared/context.md
+   项目背景摘要。包含：
+   - 进行中项目列表和状态
+   - 工作规则摘要
+   - CLAUDE.md 关键规范
+   - 参考资料索引
+
+   谁读：Claude Desktop（通过 MCP 自动读取）
+
+4. .shared/handoff.md
+   交接单。这是决策层→执行层的核心文件。
+   内容由你手动维护（在 Claude/GPT 中讨论完后填写）。
+   CC 执行时会读取这个文件了解任务。
+
+5. .shared/progress.md
+   执行进度。由 export_context.py 自动生成。
+   包含各项目的最新状态。
+   决策层读取后可以了解执行层的进展。
+
+
+四、部署步骤（macOS）
+---------------------
+
+前置条件：
+  - 已安装 Claude Desktop（从 https://claude.ai/download 下载）
+  - 已安装 Python 3（macOS 自带）
+  - 已安装 Node.js（MCP server 依赖 npx）
+    如果没装 Node.js: brew install node
+
+步骤：
+
+  1. 把整个项目目录拷贝到 Mac（或 git clone）
+
+  2. 打开终端，进入项目目录
+     cd ~/Desktop/claude\ code
+
+  3. 运行部署脚本
+     chmod +x "FOR SHRIMP/skills/多agent同步/setup.sh"
+     bash "FOR SHRIMP/skills/多agent同步/setup.sh"
+
+  4. 按提示输入项目路径（或回车用默认值）
+
+  5. 脚本完成后，打开 Claude Desktop
+
+  6. 在 Claude Desktop 中进入你的 Project
+
+  7. 编辑 Project Instructions，粘贴：
+
+     ┌──────────────────────────────────────────────┐
+     │ 每次新会话开始时，先用 MCP 读取以下文件：     │
+     │ 1. .shared/context.md（项目背景）             │
+     │ 2. .shared/handoff.md（最新任务交接）         │
+     │ 3. .shared/progress.md（执行层进度）          │
+     │ 读完后简述当前状态，然后等用户指令。          │
+     └──────────────────────────────────────────────┘
+
+  8. 重启 Claude Desktop（让 MCP 配置生效）
+
+  9. 验证：在 Claude Desktop 新会话中问"项目目前什么状态？"
+     如果它能回答出来，说明 MCP 读取成功。
+
+
+五、日常使用流程
+----------------
+
+场景 A：你在 Claude Pro 中讨论完方案，要让 CC 执行
+
+  1. 在 Claude Desktop 中讨论完，得到结论
+  2. 编辑 .shared/handoff.md，写入任务和执行标准
+     （Claude Desktop 可以通过 MCP 直接帮你写这个文件）
+  3. 打开 CC，它会自动读 handoff.md 开始执行
+  4. CC 执行完，运行 python3 scripts/export_context.py
+  5. 回到 Claude Desktop，它自动看到最新进度
+
+场景 B：CC 执行完，你想让 Claude Desktop 验收
+
+  1. CC 会话结束时自动运行 export_context.py
+     （或手动运行）
+  2. 打开 Claude Desktop 新会话
+  3. 它自动读到 .shared/ 下的最新文件
+  4. 直接问"帮我看看 CC 做得怎么样"
+
+场景 C：你在 GPT 中讨论，需要同步到 CC
+
+  1. GPT 没有 MCP，需要手动操作
+  2. 把讨论结论整理到 .shared/handoff.md
+     （复制粘贴，30 秒的事）
+  3. 让 CC 执行
+
+
+六、关于 GPT 的限制
+-------------------
+
+GPT（ChatGPT）的 Projects 没有 MCP，无法自动读取本地文件。
+这是平台限制，无法绕过。
+
+变通方案：
+  - 在 GPT Project Instructions 中写明项目背景（手动粘贴）
+  - 每次大方向确定后，把 .shared/context.md 的内容粘贴进去
+  - 这是唯一需要手动的部分，大约 1 分钟
+
+如果你只用 CC + Claude Desktop，全程零手动。
+
+
+七、故障排查
+------------
+
+问题：Claude Desktop 读不到 .shared/ 下的文件
+  → 检查 MCP 配置是否正确
+  → 配置文件位置: ~/Library/Application Support/Claude/claude_desktop_config.json
+  → 确认项目路径正确
+  → 重启 Claude Desktop
+
+问题：export_context.py 找不到 memory 目录
+  → 确认 CC 已经在这个项目上运行过，有 memory 文件
+  → memory 位置: ~/.claude/projects/<项目编码>/memory/
+  → 脚本会自动探测，如果找不到会提示
+
+问题：Node.js / npx 未找到
+  → 安装 Node.js: brew install node
+  → 或者从 https://nodejs.org 下载安装
+
+问题：MCP server 启动失败
+  → 手动测试: npx -y @modelcontextprotocol/server-filesystem /path/to/project
+  → 如果报错，检查 Node.js 版本（需要 18+）
+
+
+八、文件结构总览
+----------------
+
+项目根目录/
+├── .shared/                          ← 共享记忆层
+│   ├── context.md                    ← 自动生成（export_context.py）
+│   ├── handoff.md                    ← 手动维护（交接单）
+│   └── progress.md                   ← 自动生成（export_context.py）
+│
+├── CLAUDE.md                         ← CC 自动读取
+├── .claude/memory/                   ← CC 记忆
+│   ├── MEMORY.md                     ← CC 记忆索引
+│   └── *.md                          ← CC 记忆文件
+│
+├── scripts/
+│   └── export_context.py             ← 导出脚本
+│
+└── FOR SHRIMP/skills/多agent同步/   ← 本方案
+    ├── setup.sh                      ← 部署脚本
+    └── 说明文档.txt                  ← 你正在读的这个
+
+
+九、扩展：加入 GPT
+------------------
+
+如果未来要三端同步（CC + Claude + GPT），可以：
+
+  1. 在 export_context.py 中增加 gpt_context.md 的生成
+     （格式适配 GPT Projects 的要求）
+
+  2. 在 setup.sh 中增加提示，引导用户粘贴到 GPT Projects
+
+  3. 但 GPT 侧始终是手动的，这是平台限制
+
+本方案先解决 CC ↔ Claude Desktop 的全自动同步。
+GPT 侧保持手动粘贴，成本很低（1 分钟/次）。
