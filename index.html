@@ -395,36 +395,81 @@ function startPlanExecute() {
   stopAll();
   S.layout = 2; applyLayout();
 
-  // 创建 Planner + Executor
-  setTimeout(() => addAgent('planner', 'Planner'), 100);
+  // 创建 Claude Planner (API) + Executor (终端)
+  setTimeout(() => addClaudeAgent('planner', 'Claude-Planner'), 100);
   setTimeout(() => addAgent('executor', 'Executor'), 400);
 
   // 初始化 Handoff + Plan + Memory
   setTimeout(() => {
-    // Handoff 交接单
     $('hTask').textContent = '';
     $('hDecision').textContent = '';
     $('hCriteria').textContent = '';
     $('hConstraints').textContent = '';
 
-    // Plan 计划项
     send({ type: 'plan_update', data: { items: [
-      { id: 'p1', title: '分析需求和现状', status: 'doing', assignee: 'planner' },
-      { id: 'p2', title: '设计方案', status: 'todo', assignee: 'planner' },
-      { id: 'p3', title: '执行实现', status: 'todo', assignee: 'executor' },
-      { id: 'p4', title: '验证结果', status: 'todo', assignee: 'executor' },
+      { id: 'p1', title: '分析需求和现状', status: 'doing', assignee: 'Claude-Planner' },
+      { id: 'p2', title: '设计方案', status: 'todo', assignee: 'Claude-Planner' },
+      { id: 'p3', title: '执行实现', status: 'todo', assignee: 'Executor' },
+      { id: 'p4', title: '验证结果', status: 'todo', assignee: 'Executor' },
     ]}});
 
-    // 共享记忆
     send({ type: 'memory_write', key: null, value: {
       mode: 'plan-execute',
-      planner: 'a1 (分析、设计、规划)',
-      executor: 'a2 (执行、实现、验证)',
-      planFile: 'shared/plan.json',
-      handoff: '右侧面板填写交接单，Planner 自动读取',
-      note: 'Planner 写计划 → Executor 读取并执行 → 结果回写记忆'
+      planner: 'Claude-Planner (API 自动回复)',
+      executor: 'Executor (终端)',
+      note: 'Claude 自动分析计划并回复，Executor 在终端执行'
     }});
   }, 800);
+}
+
+// ── Claude Agent ──
+function addClaudeAgent(role, label) {
+  S.n++; const id = 'a' + S.n;
+  send({ type: 'create_agent', id, opts: { type: 'claude', role, label } });
+  buildClaudePanel(id, label, role);
+  updateUI();
+}
+
+function buildClaudePanel(id, label, role) {
+  const el = document.createElement('div'); el.className = 'panel'; el.id = 'p-' + id;
+  el.innerHTML = `<div class="panel-head"><div class="dot running"></div><span class="role-tag ${role}">${role}</span><div class="panel-title">${label}</div><button class="btn" onclick="focusPanel('${id}')">⊙</button><button class="btn x" onclick="rmAgent('${id}')">×</button></div><div class="panel-body" id="tb-${id}"></div>`;
+  $('grid').appendChild(el);
+
+  const term = new Terminal({
+    cursorBlink: true, fontSize: 13,
+    fontFamily: "'Cascadia Code','Fira Code',Consolas,monospace",
+    theme: { background:'#0c1018', foreground:'#e0e4ea', cursor:'#4a7dff', selectionBackground:'#264f78',
+      black:'#3a4a60', red:'#ff6b7a', green:'#44dd88', yellow:'#ffbb44', blue:'#4a7dff', magenta:'#bb88ff', cyan:'#44cccc', white:'#ccd0d8',
+      brightBlack:'#556677', brightRed:'#ff8899', brightGreen:'#66eeaa', brightYellow:'#ffcc66', brightBlue:'#77ccff', brightMagenta:'#dd99ff', brightCyan:'#66dddd', brightWhite:'#eef0f4' },
+  });
+  const fit = new FitAddon.FitAddon(); term.loadAddon(fit);
+  const box = $('tb-' + id); term.open(box);
+  setTimeout(() => { try { fit.fit() } catch {} }, 50);
+  new ResizeObserver(() => { try { fit.fit() } catch {} }).observe(box);
+
+  // Claude Agent 的输入方式：回车发送消息
+  let inputBuffer = '';
+  term.onData(d => {
+    if (d === '\r') {  // 回车
+      if (inputBuffer.trim()) {
+        send({ type: 'claude_input', id, text: inputBuffer.trim() });
+        term.write(`\r\n`);
+      }
+      inputBuffer = '';
+    } else if (d === '\x7f') {  // Backspace
+      if (inputBuffer.length > 0) {
+        inputBuffer = inputBuffer.slice(0, -1);
+        term.write('\b \b');
+      }
+    } else if (d >= ' ') {
+      inputBuffer += d;
+      term.write(d);
+    }
+  });
+
+  S.agents.set(id, { term, fit, label, role, alive: true, type: 'claude' });
+  el.addEventListener('click', () => focusPanel(id));
+  focusPanel(id);
 }
 
 // Handoff 交接单持久化
