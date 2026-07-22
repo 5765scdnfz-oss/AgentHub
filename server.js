@@ -325,6 +325,16 @@ function stopAgent(id) {
   updateProgress(id, { status: 'stopped' });
 }
 
+// 自动注入任务到 Executor Claude Agent
+function injectToExecutor(planItem) {
+  for (const [id, agent] of agents) {
+    if (agent.type === 'claude' && agent.role === 'executor' && agent.alive) {
+      callClaude(id, `请执行以下计划项: ${planItem.title}\n当前计划:\n${JSON.stringify(readJSON(PLAN_FILE), null, 2)}`);
+      break;
+    }
+  }
+}
+
 function updateProgress(id, data) {
   try {
     let prog = readJSON(PROGRESS_FILE);
@@ -425,9 +435,18 @@ wss.on('connection', ws => {
         case 'plan_update_item': {
           let plan = readJSON(PLAN_FILE);
           const idx = plan.items.findIndex(i => i.id === msg.itemId);
-          if (idx >= 0) { plan.items[idx] = { ...plan.items[idx], ...msg.updates }; }
-          writeJSON(PLAN_FILE, plan);
-          broadcast({ type: 'plan_update', data: plan });
+          if (idx >= 0) {
+            const oldStatus = plan.items[idx].status;
+            plan.items[idx] = { ...plan.items[idx], ...msg.updates };
+            writeJSON(PLAN_FILE, plan);
+            broadcast({ type: 'plan_update', data: plan });
+
+            // 当计划项变为 doing 时，自动注入 Executor 终端
+            if (msg.updates.status === 'doing' && oldStatus !== 'doing') {
+              const item = plan.items[idx];
+              injectToExecutor(item);
+            }
+          }
           break;
         }
 

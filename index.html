@@ -420,33 +420,25 @@ function applyLayout() {
 function startPlanExecute() {
   closeWelcome();
   stopAll();
-
-  // 设置布局
   S.layout = 2;
 
-  // 创建 Claude Planner (API)
-  addClaudeAgent('planner', 'Claude-Planner');
+  // 创建两个 Claude Agent：Planner + Executor
+  addClaudeAgent('planner', 'Planner');
+  setTimeout(() => addClaudeAgent('executor', 'Executor'), 300);
 
-  // 创建 Executor (终端) - 延迟确保布局就绪
-  setTimeout(() => {
-    addAgent('executor', 'Executor');
-    applyLayout();
-  }, 300);
-
-  // 初始化 Plan + Memory
+  // 初始化 Plan
   setTimeout(() => {
     send({ type: 'plan_update', data: { items: [
-      { id: 'p1', title: '分析需求和现状', status: 'doing', assignee: 'Claude-Planner' },
-      { id: 'p2', title: '设计方案', status: 'todo', assignee: 'Claude-Planner' },
+      { id: 'p1', title: '分析需求和现状', status: 'doing', assignee: 'Planner' },
+      { id: 'p2', title: '设计方案', status: 'todo', assignee: 'Planner' },
       { id: 'p3', title: '执行实现', status: 'todo', assignee: 'Executor' },
       { id: 'p4', title: '验证结果', status: 'todo', assignee: 'Executor' },
     ]}});
-
     send({ type: 'memory_write', key: null, value: {
       mode: 'plan-execute',
-      planner: 'Claude-Planner (API 自动回复)',
-      executor: 'Executor (终端)',
-      note: 'Claude 自动分析计划并回复，Executor 在终端执行'
+      planner: 'Planner (分析、规划、设计)',
+      executor: 'Executor (执行、实现、验证)',
+      note: '标记计划项为"进行中"时，自动通知 Executor 执行'
     }});
   }, 600);
 }
