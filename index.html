@@ -449,71 +449,55 @@ function buildClaudePanel(id, label, role) {
   setTimeout(() => { try { fit.fit() } catch {} }, 50);
   new ResizeObserver(() => { try { fit.fit() } catch {} }).observe(box);
 
-  // Claude Agent 输入处理
+  // Claude Agent 输入处理 — 最简单方式
   let inputBuffer = '';
-  let cursorPos = 0;
   const prompt = '> ';
-
-  // 完全重绘当前行
-  function redraw() {
-    // 清除整行 → 回行首 → 写 prompt + 内容
-    term.write('\x1b[2K\r' + prompt + inputBuffer);
-  }
-
-  term.write(prompt);
+  term.write('\r\n' + prompt);
 
   term.onData(d => {
-    // 方向键：xterm.js 发送完整 escape 序列
-    if (d === '\x1b[D') {  // ← 左
-      if (cursorPos > 0) { cursorPos--; redraw(); }
-      return;
-    }
-    if (d === '\x1b[C') {  // → 右
-      if (cursorPos < inputBuffer.length) { cursorPos++; redraw(); }
-      return;
-    }
-    if (d === '\x1b[A' || d === '\x1b[B') { return; }  // ↑↓ 忽略
+    // 方向键 — 暂不支持光标移动，忽略
+    if (d.startsWith('\x1b[')) return;
 
-    // 回车
+    // 回车 — 发送消息
     if (d === '\r' || d === '\n') {
       if (inputBuffer.trim()) {
         term.write('\r\n');
         send({ type: 'claude_input', id, text: inputBuffer.trim() });
       }
-      inputBuffer = ''; cursorPos = 0;
+      inputBuffer = '';
       term.write(prompt);
       return;
     }
 
-    // Backspace
+    // Backspace — 删除最后一个字符
     if (d === '\x7f' || d === '\b') {
-      if (cursorPos > 0) {
-        inputBuffer = inputBuffer.slice(0, cursorPos - 1) + inputBuffer.slice(cursorPos);
-        cursorPos--;
-        redraw();
+      if (inputBuffer.length > 0) {
+        inputBuffer = inputBuffer.slice(0, -1);
+        term.write('\b \b');
       }
       return;
     }
 
-    // Ctrl+U 清行
+    // Ctrl+U — 清空
     if (d === '\x15') {
-      inputBuffer = ''; cursorPos = 0;
-      redraw();
+      while (inputBuffer.length > 0) {
+        inputBuffer = inputBuffer.slice(0, -1);
+        term.write('\b \b');
+      }
       return;
     }
 
     // Ctrl+C
     if (d === '\x03') {
-      inputBuffer = ''; cursorPos = 0;
+      inputBuffer = '';
       term.write('^C\r\n' + prompt);
       return;
     }
 
-    // 可打印字符（逐字符处理）
+    // 可打印字符 — 直接写入终端
     if (d.length === 1 && d >= ' ') {
-      inputBuffer = inputBuffer.slice(0, cursorPos) + d + inputBuffer.slice(cursorPos);
-      cursorPos++;
-      redraw();
+      inputBuffer += d;
+      term.write(d);
     }
   });
 
