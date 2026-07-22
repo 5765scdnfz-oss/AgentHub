@@ -21,7 +21,7 @@ v24.14.0
 
 # 依赖
 ws ^8.18.0        # WebSocket 服务端
-node-pty ^1.0.0   # 伪终端（支持 claude CLI）
+node-pty ^1.1.0   # 伪终端（支持 claude CLI）
 
 # 启动
 npm install
@@ -32,7 +32,7 @@ npm start          # → http://localhost:3456
 
 ### server.js
 
-后端核心，约 150 行，结构：
+后端核心，约 675 行，结构：
 
 ```
 1. 初始化共享目录和文件
@@ -55,7 +55,7 @@ npm start          # → http://localhost:3456
 
 ### index.html
 
-前端单文件，约 700 行，结构：
+前端单文件，约 635 行，结构：
 
 ```
 1. CSS（浅色毛玻璃风格）
@@ -125,25 +125,11 @@ npm start          # → http://localhost:3456
 
 ## 下一步开发建议
 
-### 最优先：Plan → Execute 推送
+### ✅ 已完成：Plan → Execute 推送
 
-在 `server.js` 的 `plan_update` 和 `plan_add_item` 处理中，向 Execute 终端写入提示：
+`server.js` 的 `plan_update` / `plan_add_item` / `plan_update_item` 处理中已经会向 Executor 通知计划变化（`notifyClaudeAgents`），计划项切到 `doing` 时还会自动注入 Executor 终端（`injectToExecutor`）。
 
-```js
-case 'plan_add_item': {
-  // 现有逻辑...
-  
-  // 新增：向 executor 角色的 agent 发送提示
-  for (const [id, agent] of agents) {
-    if (agent.role === 'executor' && agent.alive) {
-      agent.proc.write(`\x1b[36m[Plan] 新增: ${msg.item.title}\x1b[0m\r\n`);
-    }
-  }
-  break;
-}
-```
-
-### 次优先：Execute → Plan 回写
+### 最优先：Execute → Plan 回写
 
 在 `proc.onData` 中检测关键词：
 
