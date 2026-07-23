@@ -548,9 +548,13 @@ const server = http.createServer((req, res) => {
 // ── WebSocket ──
 const wss = new WebSocketServer({ server });
 const clients = new Set();
+const connectedUsers = new Map();
 
 wss.on('connection', ws => {
   clients.add(ws);
+  ws.userId = Math.random().toString(36).slice(2, 9);
+  ws.userName = '访客' + ws.userId.slice(0, 4);
+  connectedUsers.set(ws, { id: ws.userId, name: ws.userName });
   console.log(`[WS] +1 (${clients.size})`);
 
   const sendFile = (file, type) => { try { ws.send(JSON.stringify({ type, data: readJSON(file) })); } catch {} };
@@ -558,6 +562,8 @@ wss.on('connection', ws => {
   sendFile(MSG_FILE, 'messages_init');
   sendFile(PLAN_FILE, 'plan_update');
   sendFile(PROGRESS_FILE, 'progress_update');
+  ws.send(JSON.stringify({ type: 'my_id', id: ws.userId }));
+  broadcastUsers();
 
   ws.on('message', raw => {
     let msg;
@@ -689,11 +695,17 @@ wss.on('connection', ws => {
           console.log(`[Plan Push] ${planPushEnabled ? '开启' : '关闭'}`);
           break;
         }
+        case 'set_user': {
+          ws.userName = (msg.name || '').trim().slice(0, 20) || ws.userName;
+          connectedUsers.set(ws, { id: ws.userId, name: ws.userName });
+          broadcastUsers();
+          break;
+        }
       }
     } catch (err) { console.error('[ERR]', err.message); }
   });
 
-  ws.on('close', () => { clients.delete(ws); console.log(`[WS] -1 (${clients.size})`); });
+  ws.on('close', () => { clients.delete(ws); connectedUsers.delete(ws); broadcastUsers(); console.log(`[WS] -1 (${clients.size})`); });
 });
 
 // 通知所有 Claude Agent
@@ -709,6 +721,11 @@ function notifyClaudeAgents(text) {
 function broadcast(msg) {
   const data = JSON.stringify(msg);
   for (const ws of clients) { if (ws.readyState === 1) ws.send(data); }
+}
+
+function broadcastUsers() {
+  const users = [...connectedUsers.values()];
+  broadcast({ type: 'users_update', data: { users } });
 }
 
 // ── 启动 ──

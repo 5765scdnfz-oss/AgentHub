@@ -170,6 +170,24 @@ textarea.editor:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(74,125,
 
 ::-webkit-scrollbar{width:5px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:rgba(0,0,0,0.1);border-radius:3px}
 @media(max-width:900px){.rightbar{display:none}}
+
+/* ── Name Modal ── */
+.name-overlay{position:fixed;inset:0;z-index:1000;background:rgba(240,242,245,0.85);backdrop-filter:blur(16px);display:flex;align-items:center;justify-content:center;transition:opacity .25s}
+.name-overlay.hidden{opacity:0;pointer-events:none}
+.name-card{background:var(--glass);backdrop-filter:blur(40px);border:1px solid rgba(255,255,255,0.5);border-radius:18px;padding:32px 28px;width:340px;box-shadow:var(--shadow);text-align:center}
+.name-card h2{font-size:18px;font-weight:700;margin-bottom:4px}
+.name-card .sub{font-size:12px;color:var(--text2);margin-bottom:20px}
+.name-card input{width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:var(--r2);font-size:14px;outline:none;font-family:inherit;background:rgba(255,255,255,0.6);margin-bottom:16px;transition:all .2s}
+.name-card input:focus{border-color:var(--blue);box-shadow:0 0 0 2px rgba(74,125,255,0.12)}
+.name-card .actions{display:flex;gap:8px;justify-content:center}
+.name-card .btn{min-width:80px}
+
+/* ── Users Bar ── */
+.users-bar{display:flex;align-items:center;gap:4px;margin-left:4px;overflow:hidden}
+.user-chip{display:flex;align-items:center;gap:4px;padding:3px 8px;border-radius:20px;background:rgba(255,255,255,0.5);border:1px solid var(--border);font-size:11px;font-weight:500;white-space:nowrap;cursor:default;transition:all .15s}
+.user-chip.me{border-color:var(--blue);background:var(--blue-bg);cursor:pointer}
+.user-chip.me:hover{background:rgba(74,125,255,0.15)}
+.user-avatar{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;flex-shrink:0}
 </style>
 </head>
 <body>
@@ -206,6 +224,19 @@ textarea.editor:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(74,125,
   </div>
 </div>
 
+<!-- Name Modal -->
+<div class="name-overlay hidden" id="nameModal">
+  <div class="name-card">
+    <h2>设置昵称</h2>
+    <div class="sub">让其他协作者认识你</div>
+    <input id="nameInput" placeholder="输入你的昵称..." maxlength="20" onkeydown="if(event.key==='Enter')confirmName()">
+    <div class="actions">
+      <button class="btn" onclick="skipName()">跳过</button>
+      <button class="btn primary" onclick="confirmName()">确定</button>
+    </div>
+  </div>
+</div>
+
 <!-- App -->
 <div class="app">
   <div class="topbar">
@@ -221,6 +252,8 @@ textarea.editor:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(74,125,
     <div class="sep"></div>
     <button class="btn danger" onclick="stopAll()">全部停止</button>
     <div class="spacer"></div>
+    <div class="users-bar" id="usersBar"></div>
+    <div class="sep"></div>
     <button class="btn ghost" onclick="toggleRightbar()">☰ 面板</button>
     <button class="btn ghost" onclick="showWelcome()">?</button>
   </div>
@@ -336,7 +369,7 @@ textarea.editor:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(74,125,
 <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.js"></script>
 <script>
 // ── State ──
-const S = { agents: new Map(), ws: null, layout: 2, n: 0, plan: { items: [] }, progress: { agents: {} }, msgs: [] };
+const S = { agents: new Map(), ws: null, layout: 2, n: 0, plan: { items: [] }, progress: { agents: {} }, msgs: [], myId: null, users: [] };
 
 // ── WebSocket ──
 function connect() {
@@ -376,6 +409,19 @@ function connect() {
         // 同步开关状态
         const toggle = $('planPushToggle');
         if (toggle) toggle.checked = m.enabled;
+      },
+      my_id: () => {
+        S.myId = m.id;
+        const saved = localStorage.getItem('agenthub_username');
+        if (saved) {
+          send({ type: 'set_user', name: saved });
+        } else {
+          showNameModal();
+        }
+      },
+      users_update: () => {
+        S.users = m.data.users || [];
+        renderUsers();
       },
     };
     if (h[m.type]) h[m.type]();
@@ -662,6 +708,32 @@ function updateUI() {
 function toggleRightbar() { $('rightbar').classList.toggle('hide'); setTimeout(() => { for (const [, a] of S.agents) try { a.fit.fit() } catch {} }, 250); }
 function $(id) { return document.getElementById(id) }
 function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') }
+
+// ── Name Modal ──
+function showNameModal() { $('nameModal').classList.remove('hidden'); $('nameInput').value = ''; setTimeout(() => $('nameInput').focus(), 100); }
+function hideNameModal() { $('nameModal').classList.add('hidden'); }
+function confirmName() {
+  const v = $('nameInput').value.trim().slice(0, 20);
+  if (!v) return;
+  localStorage.setItem('agenthub_username', v);
+  send({ type: 'set_user', name: v });
+  hideNameModal();
+}
+function skipName() { hideNameModal(); }
+
+// ── Users Bar ──
+const AVATAR_COLORS = ['#4a7dff','#22c55e','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6','#f97316'];
+function renderUsers() {
+  const bar = $('usersBar');
+  if (!bar) return;
+  bar.innerHTML = S.users.map(u => {
+    const isMe = u.id === S.myId;
+    const color = AVATAR_COLORS[Math.abs(hashCode(u.id)) % AVATAR_COLORS.length];
+    const initial = (u.name || '?')[0].toUpperCase();
+    return `<div class="user-chip${isMe ? ' me' : ''}"${isMe ? ' onclick="showNameModal()"' : ''} title="${esc(u.name)}${isMe ? ' (点击重命名)' : ''}"><div class="user-avatar" style="background:${color}">${esc(initial)}</div>${esc(u.name)}</div>`;
+  }).join('');
+}
+function hashCode(s) { let h = 0; for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0; return h; }
 
 // ── Welcome ──
 function closeWelcome() { $('welcome').classList.add('hidden'); localStorage.setItem('ah_ok', '1'); }
