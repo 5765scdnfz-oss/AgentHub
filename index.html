@@ -129,6 +129,9 @@ body::before{content:'';position:fixed;top:-120px;right:-120px;width:400px;heigh
 .handoff-label{font-size:11px;font-weight:600;color:var(--text2);margin-bottom:4px}
 .handoff-field{font-size:12px;color:var(--text);padding:8px 10px;background:rgba(255,255,255,0.5);border:1px solid var(--border);border-radius:6px;min-height:32px;outline:none;transition:all .2s;line-height:1.5}
 .handoff-field:focus{border-color:var(--blue);box-shadow:0 0 0 2px rgba(74,125,255,0.08)}
+.handoff-field.editing-by-other{border-color:var(--orange);box-shadow:0 0 0 2px var(--orange-bg);background:var(--orange-bg)}
+.handoff-editing-tag{font-size:10px;color:var(--orange);font-weight:600;margin-top:3px;display:none}
+.handoff-editing-tag.show{display:block}
 .handoff-field:empty::before{content:attr(data-placeholder);color:var(--text3);font-style:italic}
 .add-plan input{flex:1;padding:6px 10px;background:rgba(255,255,255,0.5);border:1px solid var(--border);border-radius:var(--r2);font-size:12px;outline:none;font-family:inherit}
 .add-plan input:focus{border-color:var(--blue)}
@@ -285,18 +288,22 @@ textarea.editor:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(74,125,
             <div class="handoff-section">
               <div class="handoff-label">📋 当前任务</div>
               <div class="handoff-field" contenteditable="true" id="hTask" data-placeholder="填写本次任务目标..."></div>
+              <div class="handoff-editing-tag" id="hTask-editing"></div>
             </div>
             <div class="handoff-section">
               <div class="handoff-label">💡 决策结论</div>
               <div class="handoff-field" contenteditable="true" id="hDecision" data-placeholder="讨论后的关键决策..."></div>
+              <div class="handoff-editing-tag" id="hDecision-editing"></div>
             </div>
             <div class="handoff-section">
               <div class="handoff-label">✅ 执行标准</div>
               <div class="handoff-field" contenteditable="true" id="hCriteria" data-placeholder="验收标准，做到什么算完成..."></div>
+              <div class="handoff-editing-tag" id="hCriteria-editing"></div>
             </div>
             <div class="handoff-section">
               <div class="handoff-label">⚠️ 已知约束</div>
               <div class="handoff-field" contenteditable="true" id="hConstraints" data-placeholder="限制条件、注意事项..."></div>
+              <div class="handoff-editing-tag" id="hConstraints-editing"></div>
             </div>
           </div>
           <!-- Plan 变更推送开关 -->
@@ -422,6 +429,20 @@ function connect() {
       users_update: () => {
         S.users = m.data.users || [];
         renderUsers();
+      },
+      field_editing: () => {
+        const { field, user } = m.data;
+        const el = $(field);
+        const tag = $(field + '-editing');
+        if (!el || !tag) return;
+        if (user && user.id !== S.myId) {
+          el.classList.add('editing-by-other');
+          tag.textContent = `${user.name} 正在编辑`;
+          tag.classList.add('show');
+        } else {
+          el.classList.remove('editing-by-other');
+          tag.classList.remove('show');
+        }
       },
     };
     if (h[m.type]) h[m.type]();
@@ -577,7 +598,8 @@ function saveHandoff() {
 
 // 监听 handoff 编辑
 document.querySelectorAll('.handoff-field').forEach(el => {
-  el.addEventListener('blur', saveHandoff);
+  el.addEventListener('focus', () => send({ type: 'field_focus', field: el.id }));
+  el.addEventListener('blur', () => { send({ type: 'field_blur', field: el.id }); saveHandoff(); });
   el.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); el.blur(); } });
 });
 

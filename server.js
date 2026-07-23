@@ -549,6 +549,7 @@ const server = http.createServer((req, res) => {
 const wss = new WebSocketServer({ server });
 const clients = new Set();
 const connectedUsers = new Map();
+const fieldEditors = new Map();
 
 wss.on('connection', ws => {
   clients.add(ws);
@@ -701,11 +702,34 @@ wss.on('connection', ws => {
           broadcastUsers();
           break;
         }
+        case 'field_focus': {
+          fieldEditors.set(msg.field, { id: ws.userId, name: ws.userName });
+          broadcast({ type: 'field_editing', data: { field: msg.field, user: { id: ws.userId, name: ws.userName } } });
+          break;
+        }
+        case 'field_blur': {
+          if (fieldEditors.get(msg.field)?.id === ws.userId) {
+            fieldEditors.delete(msg.field);
+            broadcast({ type: 'field_editing', data: { field: msg.field, user: null } });
+          }
+          break;
+        }
       }
     } catch (err) { console.error('[ERR]', err.message); }
   });
 
-  ws.on('close', () => { clients.delete(ws); connectedUsers.delete(ws); broadcastUsers(); console.log(`[WS] -1 (${clients.size})`); });
+  ws.on('close', () => {
+    clients.delete(ws);
+    connectedUsers.delete(ws);
+    for (const [field, editor] of fieldEditors) {
+      if (editor.id === ws.userId) {
+        fieldEditors.delete(field);
+        broadcast({ type: 'field_editing', data: { field, user: null } });
+      }
+    }
+    broadcastUsers();
+    console.log(`[WS] -1 (${clients.size})`);
+  });
 });
 
 // 通知所有 Claude Agent
