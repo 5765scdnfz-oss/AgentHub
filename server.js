@@ -643,6 +643,21 @@ wss.on('connection', ws => {
           break;
         }
 
+        case 'plan_inject': {
+          const plan = readJSON(PLAN_FILE);
+          const item = (plan.items || []).find(i => i.id === msg.itemId);
+          if (item) {
+            for (const [id, agent] of agents) {
+              if (agent.type === 'terminal' && agent.role === 'executor' && agent.alive) {
+                // 只广播给前端显示，不写入 proc（proc.write 是真实键盘输入，会被 shell 当命令执行）
+                broadcast({ type: 'output', id: agent.id, data: `\x1b[s\r\n\x1b[35m[Plan 注入] ${item.title}\x1b[0m\r\n\x1b[u` });
+                break;
+              }
+            }
+          }
+          break;
+        }
+
         case 'message': {
           let msgs = [];
           try { msgs = readJSON(MSG_FILE); } catch {}

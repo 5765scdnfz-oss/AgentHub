@@ -117,6 +117,10 @@ body::before{content:'';position:fixed;top:-120px;right:-120px;width:400px;heigh
 .plan-meta{font-size:10px;color:var(--text3);margin-top:2px}
 .plan-empty{color:var(--text3);text-align:center;padding:24px;font-size:12px}
 .add-plan{display:flex;gap:6px}
+.plan-inject-btn{flex-shrink:0;width:22px;height:22px;border:none;background:transparent;color:var(--text3);border-radius:6px;cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;transition:all .15s}
+.plan-inject-btn:hover{color:var(--blue);background:var(--blue-bg)}
+.plan-template-row{display:flex;gap:6px;margin-bottom:10px}
+.plan-template-row select{flex:1;padding:6px 8px;background:rgba(255,255,255,0.5);border:1px solid var(--border);border-radius:var(--r2);font-size:12px;font-family:inherit;color:var(--text);outline:none}
 
 /* ── Handoff 交接单 ── */
 .handoff{margin-bottom:12px;padding:12px;background:rgba(74,125,255,0.04);border:1px solid rgba(74,125,255,0.12);border-radius:var(--r2)}
@@ -269,6 +273,16 @@ textarea.editor:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(74,125,
               <span>自动推送 Plan 变更到 Executor</span>
             </label>
             <div style="font-size:10px;color:var(--text3);margin-top:4px;margin-left:24px">开启后，Plan 面板的新增/状态变更会实时推送到 Executor 终端</div>
+          </div>
+          <!-- Plan 模板 -->
+          <div class="plan-template-row">
+            <select id="planTemplateSelect">
+              <option value="">从模板创建...</option>
+              <option value="kanban">看板开发（数据/逻辑/渲染）</option>
+              <option value="monthly">月结处理（提取/对账/报表）</option>
+              <option value="report">报表生成（数据/格式/审核）</option>
+            </select>
+            <button class="btn" onclick="applyPlanTemplate()">套用</button>
           </div>
           <!-- 计划项列表 -->
           <div id="planItems"><div class="plan-empty">暂无计划项，下方添加</div></div>
@@ -533,8 +547,45 @@ function renderPlan() {
     const check = item.status === 'done' ? '✓' : '';
     const statusText = item.status === 'done' ? '✅ 完成' : item.status === 'doing' ? '🔄 进行中' : '⬜ 待开始';
     const assignee = item.assignee ? ` · ${item.assignee}` : '';
-    return `<div class="plan-item"><div class="plan-check ${checkCls}" onclick="cyclePlanStatus('${item.id}')">${check}</div><div class="plan-content"><div class="plan-title ${titleCls}">${esc(item.title)}</div><div class="plan-meta">${statusText}${assignee}</div></div></div>`;
+    return `<div class="plan-item"><div class="plan-check ${checkCls}" onclick="cyclePlanStatus('${item.id}')">${check}</div><div class="plan-content"><div class="plan-title ${titleCls}">${esc(item.title)}</div><div class="plan-meta">${statusText}${assignee}</div></div><button class="plan-inject-btn" onclick="injectPlanItem('${item.id}')" title="发送到 Executor 终端">📤</button></div>`;
   }).join('');
+}
+
+// ── Plan 一键注入到 Executor 终端 ──
+function injectPlanItem(id) {
+  send({ type: 'plan_inject', itemId: id });
+}
+
+// ── Plan 模板 ──
+const PLAN_TEMPLATES = {
+  kanban: [
+    { title: '数据层：统一 API + JSON + 缓存', assignee: 'Executor' },
+    { title: '逻辑层：计算/筛选/聚合/异常检测', assignee: 'Executor' },
+    { title: '渲染层：图表/表格/卡片展示', assignee: 'Executor' },
+  ],
+  monthly: [
+    { title: '数据提取', assignee: 'Executor' },
+    { title: '对账', assignee: 'Executor' },
+    { title: '报表生成', assignee: 'Executor' },
+  ],
+  report: [
+    { title: '数据整理', assignee: 'Executor' },
+    { title: '格式排版', assignee: 'Executor' },
+    { title: '审核校对', assignee: 'Executor' },
+  ],
+};
+
+function applyPlanTemplate() {
+  const sel = $('planTemplateSelect');
+  const key = sel.value;
+  if (!key || !PLAN_TEMPLATES[key]) return;
+  PLAN_TEMPLATES[key].forEach((tpl, i) => {
+    setTimeout(() => {
+      const id = 'p' + Date.now() + '_' + i;
+      send({ type: 'plan_add_item', item: { id, title: tpl.title, status: 'todo', assignee: tpl.assignee } });
+    }, i * 50);
+  });
+  sel.value = '';
 }
 
 // ── Plan 变更推送开关 ──
